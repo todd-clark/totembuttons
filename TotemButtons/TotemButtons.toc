@@ -1,0 +1,8 @@
+## Interface: 16001
+## Title: Totem Buttons
+## Notes: Hover to select Shaman spells or Paladin auras directly on an action bar.
+## Version: 0.1.21
+## OptionalDeps: EllesmereUIActionBars, Bartender4
+## SavedVariablesPerCharacter: TotemButtonsDB
+
+TotemButtons.lua
