@@ -1,0 +1,43 @@
+name: Publish to CurseForge
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Package Totem Buttons
+        run: |
+          version=$(awk '/^## Version:/ {print $3}' TotemButtons/TotemButtons.toc)
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo 'Expected a version like 0.1.45 in TotemButtons.toc.' >&2
+            exit 1
+          fi
+          archive="$RUNNER_TEMP/TotemButtons-v$version.zip"
+          zip -X "$archive" TotemButtons/TotemButtons.toc TotemButtons/TotemButtons.lua TotemButtons/Icon.tga
+          unzip -t "$archive"
+          printf 'ADDON_VERSION=%s\nADDON_ARCHIVE=%s\n' "$version" "$archive" >> "$GITHUB_ENV"
+
+      - name: Upload release to CurseForge
+        env:
+          CURSEFORGE_API_TOKEN: ${{ secrets.CURSEFORGE_API_TOKEN }}
+        run: |
+          : "${CURSEFORGE_API_TOKEN:?Add the CURSEFORGE_API_TOKEN repository secret before publishing.}"
+          metadata=$(jq -n \
+            --arg name "Totem Buttons v$ADDON_VERSION" \
+            --arg changes "$(git log -1 --format=%B)" \
+            '{displayName: $name, changelog: $changes, changelogType: "text", gameVersionNames: ["1.60.1"], releaseType: "release"}')
+          curl --fail-with-body --silent --show-error \
+            --header "X-Api-Token: $CURSEFORGE_API_TOKEN" \
+            --form-string "metadata=$metadata" \
+            --form "file=@$ADDON_ARCHIVE;type=application/zip" \
+            https://www.curseforge.com/api/projects/1815802/upload-file
