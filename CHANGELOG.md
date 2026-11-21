@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.47
+
+- Show the selected spell in Totem Buttons tooltips when the underlying action bar also handles mouseover.
+
 ## 0.1.46
 
 - Hide the underlying question-mark macro icon on default Blizzard and Bartender action bars, as well as EllesmereUI bars.

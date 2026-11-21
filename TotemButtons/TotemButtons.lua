@@ -1161,6 +1161,21 @@ local function SuppressMacroIcon(state)
     entry.hiding = false
 end
 
+-- Mouse motion can reach the underlying action button too. Keep its normal
+-- tooltip anchor and visibility, but use the selected spell for our active slot.
+hooksecurefunc(GameTooltip, "SetAction", function(tooltip)
+    local host = tooltip:GetOwner()
+    if not Readable(host) or not host or not hosts[host] then return end
+
+    for _, state in ipairs(states) do
+        if state.host == host and state.button:IsVisible() and state.button:IsMouseOver() then
+            local spell = state.button:GetAttribute("spell1")
+            if spell then tooltip:SetSpellByID(spell) end
+            return
+        end
+    end
+end)
+
 local function Build(state)
     local button = CreateFrame("Button", "TotemButton_" .. state.key:gsub("-", "_"), UIParent,
         "SecureActionButtonTemplate")
