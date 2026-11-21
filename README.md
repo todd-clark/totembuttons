@@ -20,3 +20,5 @@ Enable **Hold Shift to show flyouts** under **Global** if you prefer to reveal t
 ## Versioning
 
 Increment the last number in `TotemButtons.toc` with each addon update, for example from `0.1.0` to `0.1.1`. The options screen reads the version from the loaded addon's metadata. Version `1.0.0` is reserved for the first stable release.
+
+Add a matching `## 0.1.1` section to [CHANGELOG.md](CHANGELOG.md) with the player-facing changes. On a push to `main`, GitHub Actions sends that section to CurseForge as the release changelog.

@@ -1105,8 +1105,8 @@ local function RestoreMacroLabel(state)
     state.macroLabel, state.macroLabelAlpha = nil, nil
 end
 
--- Ellesmere draws its macro texture underneath the spell artwork. Hide that
--- texture while this overlay owns the slot, including while the bar is hidden.
+-- Hide the bar slot macro texture beneath the spell artwork while the overlay
+-- owns that slot, including while its bar is hidden.
 local macroIconStates = setmetatable({}, { __mode = "k" })
 
 local function RestoreMacroIcon(state)
@@ -1122,7 +1122,7 @@ end
 
 local function SuppressMacroIcon(state)
     local host = state.host
-    if not host or not host:GetName():match("^EABButton%d+$") or not state.button:IsShown() then return end
+    if not host or not state.button:IsShown() then return end
     local icon = host.icon or host.Icon
     if not icon or state.macroIcon == icon then return end
     RestoreMacroIcon(state)
