@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.56
+
+- Tint action buttons Blizzard blue when you lack mana for the selected spell. The red range or missing-buff tint takes priority for an active totem.
+
 ## 0.1.55
 
 - Duplicate totem buttons share buff checks and only repaint the tint when it changes.

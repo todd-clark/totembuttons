@@ -44,6 +44,14 @@ local function Readable(value)
     return not (issecretvalue and issecretvalue(value))
 end
 
+local function PaintAuraManaTint(art, lowMana)
+    if art.lowMana == lowMana then return end
+    local shade = lowMana and 0.5 or 1
+    if pcall(art.icon.SetVertexColor, art.icon, shade, shade, 1) then
+        art.lowMana = lowMana
+    end
+end
+
 local function EditModeActive()
     local manager = EditModeManagerFrame
     return manager and (manager.IsEditModeActive and manager:IsEditModeActive() or manager:IsShown())
@@ -223,6 +231,7 @@ local function UpdateTimedAuraArtwork(state)
                         auraButton.icon:SetTexture(texture)
                         auraButton.texture = texture
                     end
+                    PaintAuraManaTint(auraButton, state.lowMana == true)
                     UpdateCountdownFont(auraButton, button:GetWidth() * ratio, button:GetHeight() * ratio)
                     local hideNumbers = TotemButtonsDB.showCountdown == false
                     if auraButton.hideNumbers ~= hideNumbers then
@@ -293,7 +302,23 @@ local function ReadTotemBuff(name)
     if not unknown then return false end
 end
 
-local function PaintRangeTint(state, effect, buffReads)
+local function UpdateLowMana(state, spell)
+    local lowMana = false
+    if spell and C_Spell.IsSpellUsable then
+        local _, insufficientPower = C_Spell.IsSpellUsable(spell)
+        lowMana = Readable(insufficientPower) and insufficientPower == true
+    end
+    if state.lowMana == lowMana then return false end
+    state.lowMana = lowMana
+    if state.nativeAuraLayers then
+        for _, layer in pairs(state.nativeAuraLayers) do
+            for _, art in ipairs(layer.buttons) do PaintAuraManaTint(art, lowMana) end
+        end
+    end
+    return true
+end
+
+local function PaintButtonTint(state, effect, buffReads)
     local tint = false
     if TotemButtonsDB.showRangeTint ~= false and effect then
         local name = effect.name
@@ -310,11 +335,16 @@ local function PaintRangeTint(state, effect, buffReads)
                 and effect.rangeKnown and effect.outOfRange
         end
     end
-    local color = tint and 0.25 or 1
-    if state.rangeTint ~= color then
-        state.icon:SetVertexColor(1, color, color)
-        state.rangeTint = color
+    local color = tint and "range" or (state.lowMana and "mana" or "normal")
+    if state.buttonTint == color then return end
+    if color == "range" then
+        state.icon:SetVertexColor(1, 0.25, 0.25)
+    elseif color == "mana" then
+        state.icon:SetVertexColor(0.5, 0.5, 1)
+    else
+        state.icon:SetVertexColor(1, 1, 1)
     end
+    state.buttonTint = color
 end
 
 local function ReadSpellCooldown(spell, cooldown)
@@ -405,8 +435,9 @@ local function PaintSelection(state)
     local texture = selected and C_Spell.GetSpellTexture(selected)
     local effect = ActiveEffect(state, name)
     state.icon:SetTexture(texture or 134400)
-    state.rangeTint = nil
-    PaintRangeTint(state, effect)
+    state.buttonTint = nil
+    UpdateLowMana(state, selected)
+    PaintButtonTint(state, effect)
     if state.kind == "nova" then
         PaintFireNovaTint(state.icon)
     elseif state.kind == "aura" then
@@ -611,7 +642,7 @@ local function UpdateTotemRanges()
                 effect.outOfRange = outOfRange
                 local selected = state.button:GetAttribute("spell1")
                 local name = selected and C_Spell.GetSpellName(selected)
-                PaintRangeTint(state, ActiveEffect(state, name), buffReads)
+                PaintButtonTint(state, ActiveEffect(state, name), buffReads)
             end
         end
     end
@@ -2191,6 +2222,7 @@ events:RegisterEvent("WEAPON_SLOT_CHANGED")
 events:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")
 events:RegisterUnitEvent("UNIT_INVENTORY_CHANGED", "player")
 events:RegisterUnitEvent("UNIT_AURA", "player")
+events:RegisterUnitEvent("UNIT_POWER_UPDATE", "player")
 events:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
 if isPaladin then
     events:RegisterEvent("UPDATE_SHAPESHIFT_FORM")
@@ -2275,6 +2307,18 @@ events:SetScript("OnEvent", function(_, event, slot, action, spellID)
     elseif event == "PLAYER_REGEN_DISABLED" then
         for _, state in ipairs(states) do
             if state.host then UpdateTimer(state) end
+        end
+    elseif event == "UNIT_POWER_UPDATE" then
+        if not Readable(action) or action ~= "MANA" or EditModeActive() then return end
+        local buffReads = {}
+        for _, state in ipairs(states) do
+            if state.host then
+                local spell = state.button:GetAttribute("spell1")
+                if UpdateLowMana(state, spell) then
+                    local name = spell and C_Spell.GetSpellName(spell)
+                    PaintButtonTint(state, ActiveEffect(state, name), buffReads)
+                end
+            end
         end
     elseif event == "SPELL_UPDATE_COOLDOWN" then
         for _, state in ipairs(states) do
