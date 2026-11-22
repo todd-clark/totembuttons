@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.1.61
+
+- Draw the totem duration sweep and countdown numbers above the buff icon overlay.
+
+## 0.1.60
+
+- Let Blizzard display normal totem artwork over the red tint while the matching buff is active.
+
+## 0.1.59
+
+- Keep active totem tracking and artwork independent of the buff tint setup.
+
+## 0.1.58
+
+- Check totem buffs through Blizzard’s aura filter by default in and out of combat.
+
+## 0.1.57
+
+- Use Blizzard’s aura filter to update the missing-buff tint when direct buff lookups are restricted in dungeon combat.
+
 ## 0.1.56
 
 - Tint action buttons Blizzard blue when you lack mana for the selected spell. The red range or missing-buff tint takes priority for an active totem.
