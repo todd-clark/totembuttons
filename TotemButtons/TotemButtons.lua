@@ -252,47 +252,69 @@ local function ActiveEffect(state, name)
     end
 end
 
--- Summon spell IDs mapped to the helpful aura spell IDs. Pulsed effects such
--- as Healing Stream and Tremor do not leave a player buff to check.
+-- Each summon maps to the player aura IDs for all ranks of its persistent buff.
+-- A persistent aura can deliver periodic heals or mana. Totems without a
+-- player aura use the position check where available.
 local totemAuraSpells = {
-    [8227] = 8253,  -- Flametongue
-    [8181] = 8182,  -- Frost Resistance
-    [8071] = 8072,  -- Stoneskin
-    [8075] = 8076,  -- Strength of Earth
-    [8184] = 8185,  -- Fire Resistance
-    [8177] = 8178,  -- Grounding
-    [8512] = 8515,  -- Windfury
-    [8835] = 8836,  -- Grace of Air
-    [10595] = 10596, -- Nature Resistance
-    [15107] = 15108, -- Windwall
+    [8227] = { 8230, 8250, 10521, 15036 },  -- Flametongue
+    [8181] = { 8182, 10476, 10477 },  -- Frost Resistance
+    [8071] = { 8072, 8156, 8157, 10403, 10404, 10405 },  -- Stoneskin
+    [8075] = { 8076, 8162, 8163, 10441, 25362 },  -- Strength of Earth
+    [8184] = { 8185, 10534, 10535 },  -- Fire Resistance
+    [5394] = { 5672, 6371, 6372, 10460, 10461 },  -- Healing Stream
+    [5675] = { 5677, 10491, 10493, 10494, 24853 },  -- Mana Spring
+    [16190] = { 16191, 17355, 17360, 1325257 },  -- Mana Tide
+    [8177] = { 8178 },  -- Grounding
+    [8512] = { 8515, 10609, 10612 },  -- Windfury (area aura, before the proc)
+    [8835] = { 8836, 10626, 25360 },  -- Grace of Air
+    [10595] = { 10596, 10598, 10599 },  -- Nature Resistance
+    [15107] = { 15108, 15109, 15110 },  -- Windwall
 }
 local totemAuraIDsByName = {}
 
-local function TotemBuffMissing(name)
-    local auraID = totemAuraIDsByName[name]
-    local lookup = C_UnitAuras and C_UnitAuras.GetAuraDataBySpellName
-    if not (auraID and lookup) then return false end
+local function ReadTotemBuff(name)
+    local ids = totemAuraIDsByName[name]
+    local lookup = C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID
+    if not (ids and lookup) then return end
 
-    local ok, aura = pcall(lookup, "player", name, "HELPFUL")
-    if not ok or not Readable(aura) or aura then return false end
-    local auraName = C_Spell.GetSpellName(auraID)
-    if auraName and auraName ~= name then
-        ok, aura = pcall(lookup, "player", auraName, "HELPFUL")
-        if not ok or not Readable(aura) or aura then return false end
-    end
     local isSecret = C_Secrets and C_Secrets.ShouldSpellAuraBeSecret
-    if isSecret then
-        local checked, secret = pcall(isSecret, auraID)
-        if not checked or not Readable(secret) or secret then return false end
+    local unknown = false
+    for _, id in ipairs(ids) do
+        local ok, aura = pcall(lookup, id)
+        if not ok or not Readable(aura) then
+            unknown = true
+        elseif aura then
+            return true
+        elseif isSecret then
+            local checked, secret = pcall(isSecret, id)
+            if not checked or not Readable(secret) or secret then unknown = true end
+        end
     end
-    return true
+    if not unknown then return false end
 end
 
-local function PaintRangeTint(state, effect)
-    local tint = TotemButtonsDB.showRangeTint ~= false and effect and effect.outOfRange
-        and (not TotemButtonsDB.buffTotemsOnly or TotemBuffMissing(effect.name))
+local function PaintRangeTint(state, effect, buffReads)
+    local tint = false
+    if TotemButtonsDB.showRangeTint ~= false and effect then
+        local name = effect.name
+        local buff
+        if buffReads then buff = buffReads[name] end
+        if buff == nil and totemAuraIDsByName[name] then
+            buff = ReadTotemBuff(name)
+            if buffReads then buffReads[name] = buff == nil and "unknown" or buff end
+        end
+        if buff == false then
+            tint = true
+        else
+            tint = not totemAuraIDsByName[effect.name] and TotemButtonsDB.includeNonBuffTotems == true
+                and effect.rangeKnown and effect.outOfRange
+        end
+    end
     local color = tint and 0.25 or 1
-    state.icon:SetVertexColor(1, color, color)
+    if state.rangeTint ~= color then
+        state.icon:SetVertexColor(1, color, color)
+        state.rangeTint = color
+    end
 end
 
 local function ReadSpellCooldown(spell, cooldown)
@@ -383,6 +405,7 @@ local function PaintSelection(state)
     local texture = selected and C_Spell.GetSpellTexture(selected)
     local effect = ActiveEffect(state, name)
     state.icon:SetTexture(texture or 134400)
+    state.rangeTint = nil
     PaintRangeTint(state, effect)
     if state.kind == "nova" then
         PaintFireNovaTint(state.icon)
@@ -542,6 +565,7 @@ local function ReadMapPosition()
 end
 
 local function CaptureTotemOrigin(name)
+    if totemAuraIDsByName[name] or IsInInstance() then return end
     local rangeSquared = TotemRangeSquared(name)
     if not rangeSquared then return end
     local unit, map = ReadUnitPosition(), ReadMapPosition()
@@ -549,17 +573,21 @@ local function CaptureTotemOrigin(name)
 end
 
 local function UpdateTotemRanges()
+    local checkDistance = TotemButtonsDB.showRangeTint ~= false and TotemButtonsDB.includeNonBuffTotems == true
+        and not IsInInstance()
     local unit, map
+    local buffReads = {}
     for _, state in ipairs(states) do
         if state.kind == "nova" and state.host and state.button:IsVisible() then
             PaintFireNovaTint(state.icon)
         end
         local effect = state.slot and state.effect
-        if effect and effect.origin then
+        if effect then
             local origin = effect.origin
+            local wasKnown = effect.rangeKnown
             local outOfRange = false
             effect.rangeKnown = false
-            if ActiveEffect(state, effect.name) then
+            if checkDistance and origin and not totemAuraIDsByName[effect.name] and ActiveEffect(state, effect.name) then
                 local from, current = origin.unit
                 if from then
                     if unit == nil then unit = ReadUnitPosition() or false end
@@ -579,12 +607,11 @@ local function UpdateTotemRanges()
                     outOfRange = effect.outOfRange
                 end
             end
-            if outOfRange ~= effect.outOfRange
-                or (outOfRange and TotemButtonsDB.buffTotemsOnly and TotemButtonsDB.showRangeTint ~= false) then
+            if outOfRange ~= effect.outOfRange or wasKnown ~= effect.rangeKnown or totemAuraIDsByName[effect.name] then
                 effect.outOfRange = outOfRange
                 local selected = state.button:GetAttribute("spell1")
                 local name = selected and C_Spell.GetSpellName(selected)
-                PaintRangeTint(state, ActiveEffect(state, name))
+                PaintRangeTint(state, ActiveEffect(state, name), buffReads)
             end
         end
     end
@@ -592,12 +619,13 @@ end
 
 local function RelocateTotems()
     recentTotemCasts = {}
-    local unit, map = ReadUnitPosition(), ReadMapPosition()
+    local unit, map
+    if not IsInInstance() then unit, map = ReadUnitPosition(), ReadMapPosition() end
     local time = GetTime()
     for _, state in ipairs(states) do
         local effect = state.slot and state.effect
         if effect and ActiveEffect(state, effect.name) then
-            local rangeSquared = TotemRangeSquared(effect.name)
+            local rangeSquared = not totemAuraIDsByName[effect.name] and TotemRangeSquared(effect.name)
             effect.origin = nil
             if rangeSquared and (unit or map) then
                 effect.origin = { unit = unit, map = map, rangeSquared = rangeSquared }
@@ -1645,6 +1673,13 @@ local function FitSlotArtwork(state, host)
     state.slotMask = mask
 end
 
+local function RefreshSlotArtwork(state, host)
+    state.button:SetFrameStrata(host:GetFrameStrata())
+    state.button:SetFrameLevel(host:GetFrameLevel() + 5)
+    FitSlotArtwork(state, host)
+    UpdateCountdownFont(state, host:GetSize())
+end
+
 local function Attach(state, host, action)
     local controller = hosts[host]
     if not controller then
@@ -1688,10 +1723,7 @@ local function Attach(state, host, action)
     state.button:SetPropagateMouseMotion(name ~= nil and name:match("^EABButton%d+$") ~= nil)
     state.button:ClearAllPoints()
     state.button:SetAllPoints(host)
-    state.button:SetFrameStrata(host:GetFrameStrata())
-    state.button:SetFrameLevel(host:GetFrameLevel() + 5)
-    FitSlotArtwork(state, host)
-    UpdateCountdownFont(state, host:GetSize())
+    RefreshSlotArtwork(state, host)
     state.button:Show()
     SuppressMacroIcon(state)
     -- Apply explicitly after the overlay is visible, even for unchanged keys.
@@ -1703,24 +1735,29 @@ local function BindingModeActive()
     return (QuickKeybindFrame and QuickKeybindFrame:IsShown()) or (keyBound and keyBound:IsShown())
 end
 
+local function Detach(state)
+    hosts[state.host]:SetAttribute("slot", nil)
+    state.button:Hide()
+    RestoreMacroIcon(state)
+    RestoreMacroLabel(state)
+    ClearOverrideBindings(state.bindOwner)
+    state.bindOwner:SetAttribute("keyCount", 0)
+    state.host, state.action = nil, nil
+end
+
 local function Refresh()
     if InCombatLockdown() or EditModeActive() then return end
     ScanButtonMacros()
-    for _, state in ipairs(states) do
-        state.onBar = false
-        if state.host then
-            local controller = hosts[state.host]
-            controller:SetAttribute("slot", nil)
-            state.button:Hide()
-            RestoreMacroIcon(state)
-            RestoreMacroLabel(state)
-            ClearOverrideBindings(state.bindOwner)
-            state.bindOwner:SetAttribute("keyCount", 0)
-            state.host, state.action = nil, nil
-        end
-    end
+    for _, state in ipairs(states) do state.onBar = false end
+
     -- Let Quick Keybind Mode see and bind the actual action-bar button.
-    if unlocked or BindingModeActive() then return end
+    if unlocked or BindingModeActive() then
+        for _, state in ipairs(states) do
+            if state.host then Detach(state) end
+        end
+        return
+    end
+
     local candidates = {}
     for _, prefix in ipairs(barPrefixes) do
         local count = stockBars[prefix] and 12 or (prefix == "BT4Button" and 180 or 240)
@@ -1749,6 +1786,7 @@ local function Refresh()
     -- Bars can expose the same action slot through several frames. Only
     -- distinct slots get independent overlays when they share a macro.
     local primarySlots = TotemButtonsDB.primarySlots
+    local desired = {}
     for state, slots in pairs(candidates) do
         local primary = primarySlots[state.key]
         if not slots[primary] then
@@ -1766,16 +1804,36 @@ local function Refresh()
         end
         state.onBar = true
         for action, host in pairs(slots) do
-            if action == primary then
-                Attach(state, host, action)
-            else
+            local overlay = state
+            if action ~= primary then
                 local key = state.key .. "-slot-" .. action
                 TotemButtonsDB[key] = TotemButtonsDB[key] or TotemButtonsDB[state.key]
-                local copy = buttonsByKey[key] or RegisterCopy(state, key, state.label .. " (slot " .. action .. ")")
-                Attach(copy, host, action)
+                overlay = buttonsByKey[key] or RegisterCopy(state, key, state.label .. " (slot " .. action .. ")")
             end
+            desired[overlay] = { host = host, action = action }
         end
     end
+
+    -- Release all changed slots first, so moving or swapping overlays never
+    -- restores a macro icon or clears bindings after its new owner attaches.
+    for _, state in ipairs(states) do
+        local slot = desired[state]
+        if state.host and (not slot or state.host ~= slot.host or state.action ~= slot.action) then
+            Detach(state)
+        end
+    end
+    for state, slot in pairs(desired) do
+        if state.host then
+            hosts[slot.host]:SetAttribute("page", slot.host:GetParent():GetAttribute("actionpage"))
+            RefreshSlotArtwork(state, slot.host)
+            if not state.button:IsShown() then state.button:Show() end
+            SuppressMacroIcon(state)
+            SyncSlotKeys(state, false)
+        else
+            Attach(state, slot.host, slot.action)
+        end
+    end
+
     local known, knownIDs = KnownSpells()
     for _, state in ipairs(states) do
         RefreshChoices(state, known, knownIDs)
@@ -2001,16 +2059,18 @@ local function BuildSettings()
     local UpdateRangeOptions
     if isShaman then
         local totemsHeading = AddHeading("Totems", countdownCheck, 0, -42)
-        local rangeCheck = AddCheck("showRangeTint", "Tint out-of-range totems red", totemsHeading, -59, RefreshAppearance)
-        local buffOnlyCheck, buffOnlyLabel = AddCheck("buffTotemsOnly", "Only buff totems",
+        local rangeCheck = AddCheck("showRangeTint", "Tint active totems red when you are missing their buff",
+            totemsHeading, -59, RefreshAppearance)
+        local nonBuffCheck, nonBuffLabel = AddCheck("includeNonBuffTotems",
+            "Include non-buff totems |cffff4040(does not work in instances)|r",
             rangeCheck, 0, RefreshAppearance, 24)
         UpdateRangeOptions = function()
             local enabled = TotemButtonsDB.showRangeTint ~= false
-            buffOnlyCheck:SetEnabled(enabled)
-            buffOnlyLabel:SetFontObject(enabled and GameFontHighlight or GameFontDisable)
+            nonBuffCheck:SetEnabled(enabled)
+            nonBuffLabel:SetAlpha(enabled and 1 or 0.5)
         end
         rangeCheck:HookScript("OnClick", UpdateRangeOptions)
-        local utilityHeading = AddHeading("Imbues and shields", buffOnlyCheck, -24, -9)
+        local utilityHeading = AddHeading("Imbues and shields", nonBuffCheck, -24, -9)
         local novaHeading = AddHeading("Fire Nova", utilityHeading, 0, -65)
 
         local totemColumn, utilityColumn = 1, 1
@@ -2176,7 +2236,7 @@ events:SetScript("OnEvent", function(_, event, slot, action, spellID)
         TotemButtonsDB = TotemButtonsDB or {}
         TotemButtonsDB.grayFireNova = nil
         TotemButtonsDB.primarySlots = TotemButtonsDB.primarySlots or {}
-        TotemButtonsDB.buffTotemsOnly = TotemButtonsDB.buffTotemsOnly == true
+        TotemButtonsDB.includeNonBuffTotems = TotemButtonsDB.includeNonBuffTotems == true
         TotemButtonsDB.shiftFlyouts = TotemButtonsDB.shiftFlyouts == true
         local countdownPercent = tonumber(TotemButtonsDB.countdownPercent)
         local previousSize = tonumber(TotemButtonsDB.countdownSize)
@@ -2296,7 +2356,16 @@ SlashCmdList.TOTEMBUTTONS = function(message)
                 local effect = state.effect
                 local status = "no identified active totem"
                 if effect and ActiveEffect(state, effect.name) then
-                    if not effect.origin then
+                    local buff = ReadTotemBuff(effect.name)
+                    if buff ~= nil then
+                        status = buff and "buff active on you" or "buff missing on you"
+                    elseif totemAuraIDsByName[effect.name] then
+                        status = "buff status unavailable"
+                    elseif TotemButtonsDB.showRangeTint == false or not TotemButtonsDB.includeNonBuffTotems then
+                        status = "non-buff range check disabled"
+                    elseif IsInInstance() then
+                        status = "non-buff range unavailable in instances"
+                    elseif not effect.origin then
                         status = "summon position unavailable"
                     elseif not effect.rangeKnown then
                         status = "current position unavailable or on a different map"

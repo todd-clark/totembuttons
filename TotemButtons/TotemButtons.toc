@@ -1,7 +1,7 @@
 ## Interface: 16001
 ## Title: Totem Buttons
 ## Notes: Hover to select Shaman spells or Paladin auras, seals, and buffs on your action bars.
-## Version: 0.1.47
+## Version: 0.1.55
 ## IconTexture: Interface\AddOns\TotemButtons\Icon.tga
 ## OptionalDeps: EllesmereUIActionBars, Bartender4
 ## SavedVariablesPerCharacter: TotemButtonsDB

@@ -4,8 +4,17 @@ on:
   push:
     branches: [main]
 
+concurrency:
+  group: curseforge-release
+  queue: max
+
 permissions:
   contents: read
+  actions: read
+
+defaults:
+  run:
+    shell: bash
 
 jobs:
   publish:
@@ -14,37 +23,91 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+          fetch-depth: 0
 
       - name: Package Totem Buttons
+        id: package
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           version=$(awk '/^## Version:/ {print $3}' TotemButtons/TotemButtons.toc)
           if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo 'Expected a version like 0.1.45 in TotemButtons.toc.' >&2
             exit 1
           fi
+          github_api() {
+            curl --fail-with-body --silent --show-error \
+              --header "Authorization: Bearer $GH_TOKEN" \
+              --header "Accept: application/vnd.github+json" \
+              "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/$1"
+          }
+          previous_sha=""
+          page=1
+          while [[ -z "$previous_sha" ]]; do
+            runs=$(github_api "workflows/curseforge.yml/runs?branch=main&event=push&status=success&per_page=100&page=$page")
+            candidates=$(jq -r '.workflow_runs[] | [.id, .run_attempt, .head_sha] | @tsv' <<< "$runs")
+            if [[ -z "$candidates" ]]; then break; fi
+            while IFS=$'\t' read -r run_id attempt sha; do
+              jobs=$(github_api "runs/$run_id/attempts/$attempt/jobs")
+              if jq -e 'any(.jobs[].steps[]; .name == "Upload release to CurseForge" and .conclusion == "success")' <<< "$jobs" > /dev/null; then
+                previous_sha="$sha"
+                break
+              fi
+            done <<< "$candidates"
+            page=$((page + 1))
+          done
+          previous_version=""
+          if [[ -n "$previous_sha" ]]; then
+            previous_version=$(git show "$previous_sha:TotemButtons/TotemButtons.toc" | awk '/^## Version:/ {print $3}')
+            if [[ ! "$previous_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "No valid addon version at the previous successful upload ($previous_sha)." >&2
+              exit 1
+            fi
+          fi
+
+          changelog="$RUNNER_TEMP/curseforge-changelog.md"
+          python3 - "$version" "$previous_version" > "$changelog" <<'PY'
+          import re
+          import sys
+          from pathlib import Path
+
+          def version_tuple(value):
+              return tuple(map(int, value.split(".")))
+
+          current = version_tuple(sys.argv[1])
+          previous = version_tuple(sys.argv[2]) if sys.argv[2] else None
+          if previous is not None and current <= previous:
+              sys.exit(0)
+
+          text = Path("CHANGELOG.md").read_text()
+          parts = re.split(r"^## (\d+\.\d+\.\d+)[ \t]*$", text, flags=re.MULTILINE)
+          sections = {version_tuple(version): body.strip() for version, body in zip(parts[1::2], parts[2::2])}
+          if not sections.get(current):
+              sys.exit(f"Add release notes under ## {sys.argv[1]} in CHANGELOG.md.")
+          for version in sorted(sections, reverse=True):
+              body = sections[version]
+              if body and version <= current and (previous is None or version > previous):
+                  print("## " + ".".join(map(str, version)) + "\n\n" + body + "\n")
+          PY
+          if [[ ! -s "$changelog" ]]; then
+            echo "Version $version has already been submitted or superseded."
+            exit 0
+          fi
           archive="$RUNNER_TEMP/TotemButtons-v$version.zip"
           zip -X "$archive" TotemButtons/TotemButtons.toc TotemButtons/TotemButtons.lua TotemButtons/Icon.tga
           unzip -t "$archive"
-          printf 'ADDON_VERSION=%s\nADDON_ARCHIVE=%s\n' "$version" "$archive" >> "$GITHUB_ENV"
+          printf 'ADDON_VERSION=%s\nADDON_ARCHIVE=%s\nADDON_CHANGELOG=%s\n' "$version" "$archive" "$changelog" >> "$GITHUB_ENV"
+          echo 'ready=true' >> "$GITHUB_OUTPUT"
 
       - name: Upload release to CurseForge
+        if: steps.package.outputs.ready == 'true'
         env:
           CURSEFORGE_API_TOKEN: ${{ secrets.CURSEFORGE_API_TOKEN }}
         run: |
-          changes=$(awk -v heading="## $ADDON_VERSION" '
-            { sub(/\r$/, "") }
-            $0 == heading { found = 1; next }
-            found && /^## / { exit }
-            found { print }
-          ' CHANGELOG.md)
-          if [[ -z "${changes//[[:space:]]/}" ]]; then
-            echo "Add release notes under ## $ADDON_VERSION in CHANGELOG.md." >&2
-            exit 1
-          fi
           : "${CURSEFORGE_API_TOKEN:?Add the CURSEFORGE_API_TOKEN repository secret before publishing.}"
           metadata=$(jq -n \
             --arg name "Totem Buttons v$ADDON_VERSION" \
-            --arg changes "$changes" \
+            --rawfile changes "$ADDON_CHANGELOG" \
             '{displayName: $name, changelog: $changes, changelogType: "markdown", gameVersionNames: ["1.60.1"], releaseType: "release"}')
           curl --fail-with-body --silent --show-error \
             --header "X-Api-Token: $CURSEFORGE_API_TOKEN" \
