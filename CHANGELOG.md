@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.85
+
+- Reuse existing macros when placing buttons in Gamepad UI. Each crossbar slot keeps its own spell selection.
+
 ## 0.1.84
 
 - Keep the controller totem sweep above the in-range aura art and hide the macro label while Totem Buttons owns the slot.

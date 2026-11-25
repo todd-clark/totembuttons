@@ -2432,7 +2432,8 @@ local function PickUpButton(state, newCopy)
     if GetCursorInfo() then return end
     local byButton, names = ScanButtonMacros()
     local key, name = state.key, "TB " .. state.label
-    newCopy = newCopy or state.onBar
+    -- Crossbar selections belong to the slot, so placements can share a macro.
+    newCopy = newCopy or (state.onBar and not addon.IsGamepadUIEnabled())
     if newCopy then
         local copy = 2
         repeat

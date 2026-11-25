@@ -1,5 +1,13 @@
 local _, addon = ...
 
+function addon.IsGamepadUIEnabled()
+    if InputUtil and InputUtil.IsGamepadUIEnabled then
+        return InputUtil.IsGamepadUIEnabled()
+    end
+    local main = GamepadMainActionBarFrame
+    return main and main:IsShown()
+end
+
 function addon.CreateCrossbar(deps)
     local Readable = deps.Readable
     local flyoutNavigation = deps.flyoutNavigation
@@ -11,12 +19,6 @@ function addon.CreateCrossbar(deps)
     local crossbarSlots, crossbarButtons = {}, {}
     local controller, watchedMain
 
-    local function GamepadUIEnabled(main)
-        if InputUtil and InputUtil.IsGamepadUIEnabled then
-            return InputUtil.IsGamepadUIEnabled()
-        end
-        return main:IsShown()
-    end
     local beforeClick = [[
         local physical = self:GetAttribute("tbPhysicalButton")
         if not physical then return end
@@ -211,7 +213,7 @@ function addon.CreateCrossbar(deps)
         end
         local previous = crossbarSlots
         crossbarSlots = {}
-        if GamepadUIEnabled(main) and CanUseSlots() then
+        if addon.IsGamepadUIEnabled() and CanUseSlots() then
             HookCrossbarButtons(main)
             local first = gamepad.GetFirstGamepadActionStorageSlotIndex()
             for action = first or 0, first and first + 999 or -1 do
@@ -231,7 +233,6 @@ function addon.CreateCrossbar(deps)
                     if previous[action] ~= state then
                         SecureHandlerSetFrameRef(controller, "slot" .. action, state.flyout)
                     end
-                    original.onBar = true
                 end
             end
         end
