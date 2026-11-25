@@ -37,7 +37,7 @@ local imbueEnchantFamilies = {
 }
 local states, hosts, elementsByKey, buttonsByKey = {}, {}, {}, {}
 local recentTotemCasts, learnedTotemDurations = {}, {}
-local RefreshCrossbarIcons, WakeTracking
+local WakeTracking
 local flyoutModifiers = { "SHIFT", "CTRL", "ALT" }
 
 local function KeyboardFlyoutModifier()
@@ -129,8 +129,9 @@ auraOpacityFrame:Hide()
 local shownAuraLayers, auraHostAlphas = {}, {}
 
 local function AuraLayerOpacity(state, parentAlpha)
-    if parentAlpha > 0 and state.host and state.button:IsVisible() then
-        return math.min(1, state.host:GetEffectiveAlpha() / parentAlpha)
+    local host = state.host or (state.crossbarArt and state.crossbarArt.host)
+    if parentAlpha > 0 and host and (state.crossbarArt or state.button:IsVisible()) then
+        return math.min(1, host:GetEffectiveAlpha() / parentAlpha)
     end
     return 0
 end
@@ -143,7 +144,7 @@ auraOpacityFrame:SetScript("OnUpdate", function()
     wipe(auraHostAlphas)
     local parentAlpha = UIParent:GetEffectiveAlpha()
     for layer, state in pairs(shownAuraLayers) do
-        local host = state.host
+        local host = state.host or (state.crossbarArt and state.crossbarArt.host)
         local alpha = host and auraHostAlphas[host]
         if alpha == nil then
             alpha = AuraLayerOpacity(state, parentAlpha)
@@ -226,8 +227,10 @@ local function ActiveEffect(state, name)
 end
 
 local function UpdateTimedAuraArtwork(state)
-    local host, button = state.host, state.button
-    local selected = button:GetAttribute("spell1")
+    local art = state.crossbarArt or state
+    local host = art.host
+    local button = state.crossbarArt and host or state.button
+    local selected = state.button:GetAttribute("spell1")
     local name = selected and C_Spell.GetSpellName(selected)
     local canUpdateLayout = not InCombatLockdown()
     local totem = state.slot ~= nil
@@ -255,8 +258,8 @@ local function UpdateTimedAuraArtwork(state)
     for spellName, layer in pairs(state.nativeAuraLayers) do
         local show = visible and spellName == name
         if visible and (show or totem) and canUpdateLayout then
-            local x, y = state.icon:GetCenter()
-            local width, height = state.icon:GetSize()
+            local x, y = art.icon:GetCenter()
+            local width, height = art.icon:GetSize()
             if x and y and width > 0 and height > 0 then
                 -- Match the gray artwork. Its mask is positioned independently.
                 local ratio = button:GetEffectiveScale() / UIParent:GetEffectiveScale()
@@ -279,7 +282,7 @@ local function UpdateTimedAuraArtwork(state)
                     layer.spells[selected] = true
                     layer.container:SetAuraGroupCandidateFilters("shield", { includeSpellIDs = layer.spells })
                 end
-                local slotMask = state.slotMask
+                local slotMask = art.slotMask
                 local texture = C_Spell.GetSpellTexture(show and selected or layer.baseSpell)
                 for _, auraButton in ipairs(layer.buttons) do
                     if resized or auraButton.width ~= width or auraButton.height ~= height then
@@ -295,7 +298,7 @@ local function UpdateTimedAuraArtwork(state)
                         auraButton.mask = slotMask
                     end
                     if resized or auraButton.artRevision ~= state.auraArtRevision then
-                        auraButton.icon:SetTexCoord(state.icon:GetTexCoord())
+                        auraButton.icon:SetTexCoord(art.icon:GetTexCoord())
                         auraButton.artRevision = state.auraArtRevision
                     end
                     if texture and auraButton.texture ~= texture then
@@ -345,22 +348,23 @@ end
 
 local function PaintButtonTint(state, effect)
     local tint = false
-    if state.slot and state.host and totemAuraIDsByName[effect and effect.name] then
+    if state.slot and (state.host or state.crossbarArt) and totemAuraIDsByName[effect and effect.name] then
         local layer = state.nativeAuraLayers and state.nativeAuraLayers[effect.name]
         tint = TotemButtonsDB.showRangeTint ~= false and layer and layer.width and layer.host:IsShown()
     elseif TotemButtonsDB.showRangeTint ~= false and effect then
         tint = TotemButtonsDB.includeNonBuffTotems == true and effect.rangeKnown and effect.outOfRange
     end
+    local art = state.crossbarArt or state
     local color = tint and "range" or (state.lowMana and "mana" or "normal")
-    if state.buttonTint == color then return end
+    if art.buttonTint == color then return end
     if color == "range" then
-        state.icon:SetVertexColor(1, 0.25, 0.25)
+        art.icon:SetVertexColor(1, 0.25, 0.25)
     elseif color == "mana" then
-        state.icon:SetVertexColor(0.5, 0.5, 1)
+        art.icon:SetVertexColor(0.5, 0.5, 1)
     else
-        state.icon:SetVertexColor(1, 1, 1)
+        art.icon:SetVertexColor(1, 1, 1)
     end
-    state.buttonTint = color
+    art.buttonTint = color
 end
 
 local function ReadSpellCooldown(spell, cooldown)
@@ -471,25 +475,26 @@ end
 
 local function PaintSelection(state)
     if EditModeActive() then return end
+    local art = state.crossbarArt or state
     local selected = state.button:GetAttribute("spell1")
     local name = selected and C_Spell.GetSpellName(selected)
     local texture = selected and C_Spell.GetSpellTexture(selected)
     local effect = ActiveEffect(state, name)
-    state.icon:SetTexture(texture or 134400)
-    if state.crossbarSlot and RefreshCrossbarIcons then RefreshCrossbarIcons(state.crossbarSlot) end
-    state.buttonTint = nil
+    art.icon:SetTexture(texture or 134400)
+    art.buttonTint = nil
     UpdateLowMana(state, selected)
     if state.kind == "aura" then
-        state.icon:SetDesaturated(TotemButtonsDB.greyInactive ~= false and not PaladinAuraActive(name))
+        art.icon:SetDesaturated(TotemButtonsDB.greyInactive ~= false and not PaladinAuraActive(name))
     elseif state.kind ~= "nova" and state.kind ~= "judgement" then
-        state.icon:SetDesaturated(not effect and TotemButtonsDB.greyInactive ~= false)
+        art.icon:SetDesaturated(not effect and TotemButtonsDB.greyInactive ~= false)
     end
-    if state.slot and state.host then UpdateTimedAuraArtwork(state) end
+    if state.slot and art.host then UpdateTimedAuraArtwork(state) end
     PaintButtonTint(state, effect)
-    if state.kind == "nova" then PaintFireNovaTint(state.icon) end
+    if state.kind == "nova" then PaintFireNovaTint(art.icon) end
     if selected and state.kind ~= "judgement" then TotemButtonsDB[state.key] = selected end
 
-    local cooldown = state.cooldown
+    local cooldown = art.cooldown
+    if state.crossbarArt then UpdateCountdownFont(art, art.host:GetSize()) end
     local hideNumbers = TotemButtonsDB.showCountdown == false
     cooldown.noCooldownCount = hideNumbers
     cooldown:SetHideCountdownNumbers(hideNumbers)
@@ -503,12 +508,12 @@ local function PaintSelection(state)
     local showingSpellCooldown = not effect and (start ~= nil or timer ~= nil)
     state.displayedEffect = effect
     if WakeTracking then WakeTracking() end
-    if start == state.paintedStart and duration == state.paintedDuration
-        and rate == state.paintedRate and timer == state.paintedTimer
-        and showingSpellCooldown == state.showingSpellCooldown then return end
-    state.paintedStart, state.paintedDuration, state.paintedRate, state.paintedTimer = start, duration, rate, timer
-    state.showingSpellCooldown = showingSpellCooldown
-    state.paintingCooldown = true
+    if start == art.paintedStart and duration == art.paintedDuration
+        and rate == art.paintedRate and timer == art.paintedTimer
+        and showingSpellCooldown == art.showingSpellCooldown then return end
+    art.paintedStart, art.paintedDuration, art.paintedRate, art.paintedTimer = start, duration, rate, timer
+    art.showingSpellCooldown = showingSpellCooldown
+    art.paintingCooldown = true
     cooldown:SetReverse(not showingSpellCooldown)
     if timer and cooldown.SetCooldownFromDurationObject then
         cooldown:SetCooldownFromDurationObject(timer)
@@ -517,7 +522,7 @@ local function PaintSelection(state)
     else
         cooldown:Clear()
     end
-    state.paintingCooldown = false
+    art.paintingCooldown = false
 end
 
 local function FindEffectName(state, spellID, totemName, icon)
@@ -653,10 +658,10 @@ local function UpdateTotemRanges()
         and not IsInInstance()
     local unit, map
     for _, state in ipairs(states) do
-        if state.kind == "nova" and state.host and state.button:IsVisible() then
-            PaintFireNovaTint(state.icon)
+        if state.kind == "nova" and (state.crossbarArt or (state.host and state.button:IsVisible())) then
+            PaintFireNovaTint((state.crossbarArt or state).icon)
         end
-        if state.slot and state.host then UpdateTimedAuraArtwork(state) end
+        if state.slot and (state.host or state.crossbarArt) then UpdateTimedAuraArtwork(state) end
         local effect = state.slot and state.effect
         if effect then
             local origin = effect.origin
@@ -1001,7 +1006,7 @@ end
 
 local function RefreshTimedAuras()
     for _, state in ipairs(states) do
-        if UsesTimedAura(state) and state.host then
+        if UsesTimedAura(state) and (state.host or state.crossbarArt) then
             UpdateTimedAura(state)
         end
     end
@@ -1010,7 +1015,7 @@ end
 local trackingTimer
 local function NeedsTracking()
     for _, state in ipairs(states) do
-        if state.host and state.button:IsVisible() then
+        if state.crossbarArt or (state.host and state.button:IsVisible()) then
             local effect = state.slot and state.effect
             if effect and ActiveEffect(state, effect.name) then return true end
             if UsesTimedAura(state) then
@@ -1355,7 +1360,8 @@ end)
 local function HideMacroLabel(state)
     local host = state.host
     if not host or state.macroLabel then return end
-    local label = host.Name or _G[host:GetName() .. "Name"]
+    local hostName = host:GetName()
+    local label = host.Name or (hostName and _G[hostName .. "Name"])
     if not label then return end
     local alpha = label:GetAlpha()
     if not Readable(alpha) then return end
@@ -2218,14 +2224,17 @@ local function FitSlotArtwork(state, host)
     state.slotMask = mask
 end
 
+local function RaiseTotemCooldown(cooldown, button)
+    -- Keep the totem duration sweep above the separate in-range aura artwork.
+    cooldown:SetFrameStrata(button:GetFrameStrata())
+    cooldown:SetFrameLevel(button:GetFrameLevel() + 8)
+end
+
 local function RefreshSlotArtwork(state, host)
     state.button:SetFrameStrata(host:GetFrameStrata())
     state.button:SetFrameLevel(host:GetFrameLevel() + 5)
     if state.slot then
-        -- The aura container and its icon button sit above the overlay host.
-        -- Keep the original totem sweep and countdown above that whole stack.
-        state.cooldown:SetFrameStrata(state.button:GetFrameStrata())
-        state.cooldown:SetFrameLevel(state.button:GetFrameLevel() + 8)
+        RaiseTotemCooldown(state.cooldown, state.button)
     end
     FitSlotArtwork(state, host)
     UpdateCountdownFont(state, host:GetSize())
@@ -2297,7 +2306,7 @@ local function Detach(state)
 end
 
 local Refresh, RefreshCrossbarSlots
-RefreshCrossbarSlots, RefreshCrossbarIcons = addon.CreateCrossbar({
+RefreshCrossbarSlots = addon.CreateCrossbar({
     Readable = Readable,
     flyoutNavigation = flyoutNavigation,
     MacroButton = MacroButton,
@@ -2305,6 +2314,11 @@ RefreshCrossbarSlots, RefreshCrossbarIcons = addon.CreateCrossbar({
     RegisterCopy = RegisterCopy,
     CanUseSlots = function() return not unlocked and not BindingModeActive() end,
     Refresh = function() Refresh() end,
+    UpdateTimer = UpdateTimer,
+    UpdateTimedAuraArtwork = UpdateTimedAuraArtwork,
+    RaiseTotemCooldown = RaiseTotemCooldown,
+    HideMacroLabel = HideMacroLabel,
+    RestoreMacroLabel = RestoreMacroLabel,
 })
 
 Refresh = function()
@@ -2688,12 +2702,12 @@ events:SetScript("OnEvent", function(_, event, slot, action, spellID)
         NotePlayerCast(spellID)
     elseif event == "PLAYER_REGEN_DISABLED" then
         for _, state in ipairs(states) do
-            if state.host then UpdateTimer(state) end
+            if state.host or state.crossbarArt then UpdateTimer(state) end
         end
     elseif event == "UNIT_POWER_UPDATE" then
         if not Readable(action) or action ~= "MANA" or EditModeActive() then return end
         for _, state in ipairs(states) do
-            if state.host then
+            if state.host or state.crossbarArt then
                 local spell = state.button:GetAttribute("spell1")
                 if UpdateLowMana(state, spell) then
                     local name = spell and C_Spell.GetSpellName(spell)
@@ -2703,7 +2717,7 @@ events:SetScript("OnEvent", function(_, event, slot, action, spellID)
         end
     elseif event == "SPELL_UPDATE_COOLDOWN" then
         for _, state in ipairs(states) do
-            if state.host and (state.slot or state.kind == "nova" or state.kind == "judgement") then
+            if (state.host or state.crossbarArt) and (state.slot or state.kind == "nova" or state.kind == "judgement") then
                 PaintSelection(state)
             end
         end
@@ -2757,7 +2771,7 @@ SlashCmdList.TOTEMBUTTONS = function(message)
     end
     if key == "shieldstatus" then
         for _, state in ipairs(states) do
-            if UsesTimedAura(state) and state.host then
+            if UsesTimedAura(state) and (state.host or state.crossbarArt) then
                 UpdateTimedAura(state)
                 local selected = state.button:GetAttribute("spell1")
                 local name = selected and C_Spell.GetSpellName(selected)

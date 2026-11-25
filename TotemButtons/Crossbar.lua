@@ -77,15 +77,52 @@ function addon.CreateCrossbar(deps)
     local function UpdateCrossbarIcon(button)
         local action = button:GetID()
         local state = Readable(action) and crossbarSlots[action]
-        local spell = state and state.keyButton:GetAttribute("spell")
-        local icon = crossbarButtons[button]
-        if spell then icon:SetTexture(C_Spell.GetSpellTexture(spell) or 134400) end
-        icon:SetShown(not not spell)
-    end
-
-    local function RefreshCrossbarIcons(slot)
-        for button in pairs(crossbarButtons) do
-            if not slot or button:GetID() == slot then UpdateCrossbarIcon(button) end
+        local art = crossbarButtons[button]
+        if state and not button:IsVisible() then state = nil end
+        local previous = art.state
+        if previous ~= state then
+            if previous and previous.crossbarArt == art then
+                previous.crossbarArt = nil
+                deps.UpdateTimedAuraArtwork(previous)
+            end
+            art.state = state
+            art.paintedStart, art.paintedDuration, art.paintedRate, art.paintedTimer = nil, nil, nil, nil
+            art.showingSpellCooldown = nil
+            art.paintingCooldown = true
+            art.cooldown:Clear()
+            art.paintingCooldown = nil
+        end
+        art.icon:SetShown(state ~= nil)
+        art.cooldown:SetShown(state ~= nil)
+        if not state then
+            deps.RestoreMacroLabel(art)
+            return
+        end
+        deps.HideMacroLabel(art)
+        state.crossbarArt = art
+        local mask = button.CircleMask and button.CircleMask:IsShown() and button.CircleMask or button.SquareMask
+        local changedMask = art.slotMask ~= mask
+        if changedMask then
+            art.slotMask = mask
+            local bounds = mask or button.icon
+            art.cooldown:SetAllPoints(bounds)
+            art.cooldown:SetSwipeTexture(mask and mask:GetTexture() or "")
+        end
+        local width, height = button:GetSize()
+        local strata, level = button:GetFrameStrata(), button:GetFrameLevel()
+        local changedLayer = art.strata ~= strata or art.level ~= level
+        if previous ~= state or changedLayer then
+            art.strata, art.level = strata, level
+            if state.slot then
+                deps.RaiseTotemCooldown(art.cooldown, button)
+            else
+                art.cooldown:SetFrameStrata(strata)
+                art.cooldown:SetFrameLevel(level + 1)
+            end
+        end
+        if previous ~= state or changedMask or changedLayer or art.width ~= width or art.height ~= height then
+            art.width, art.height = width, height
+            deps.UpdateTimer(state)
         end
     end
 
@@ -139,8 +176,22 @@ function addon.CreateCrossbar(deps)
                     -- Blizzard toggles the active mask when the bar changes shape.
                     if button.CircleMask then icon:AddMaskTexture(button.CircleMask) end
                     if button.SquareMask then icon:AddMaskTexture(button.SquareMask) end
-                    crossbarButtons[button] = icon
+                    local cooldown = CreateFrame("Cooldown", nil, button, "CooldownFrameTemplate")
+                    cooldown:SetAllPoints(nativeIcon)
+                    cooldown:SetDrawEdge(false)
+                    cooldown:SetDrawBling(false)
+                    cooldown:Hide()
+                    local art = { host = button, icon = icon, cooldown = cooldown }
+                    crossbarButtons[button] = art
+                    cooldown:HookScript("OnCooldownDone", function()
+                        if art.state and not art.paintingCooldown then deps.UpdateTimer(art.state) end
+                    end)
                     hooksecurefunc(button, "UpdateAction", UpdateCrossbarIcon)
+                    hooksecurefunc(button, "SetShapeToCircle", UpdateCrossbarIcon)
+                    hooksecurefunc(button, "SetShapeToSquare", UpdateCrossbarIcon)
+                    button:HookScript("OnShow", UpdateCrossbarIcon)
+                    button:HookScript("OnHide", UpdateCrossbarIcon)
+                    button:HookScript("OnSizeChanged", UpdateCrossbarIcon)
                 end
             end
         end
@@ -190,7 +241,7 @@ function addon.CreateCrossbar(deps)
                 state.flyout:Hide()
             end
         end
-        RefreshCrossbarIcons()
+        for button in pairs(crossbarButtons) do UpdateCrossbarIcon(button) end
     end
-    return RefreshCrossbarSlots, RefreshCrossbarIcons
+    return RefreshCrossbarSlots
 end

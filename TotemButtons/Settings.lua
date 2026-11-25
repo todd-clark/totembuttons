@@ -217,7 +217,8 @@ function addon.BuildSettings(deps)
         TotemButtonsDB.countdownPercent = value
         sizeValue:SetText(value .. "%")
         for _, state in ipairs(states) do
-            if state.host then UpdateCountdownFont(state, state.host:GetSize()) end
+            local art = state.crossbarArt or state
+            if art.host then UpdateCountdownFont(art, art.host:GetSize()) end
         end
         RefreshTimedAuras()
     end)

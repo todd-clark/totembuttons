@@ -1,7 +1,7 @@
 ## Interface: 16001
 ## Title: Totem Buttons
 ## Notes: Shaman and Paladin spell pickers for action bars and the WoW Forever gamepad crossbar.
-## Version: 0.1.82
+## Version: 0.1.84
 ## IconTexture: Interface\AddOns\TotemButtons\Icon.tga
 ## OptionalDeps: EllesmereUIActionBars, Bartender4
 ## SavedVariablesPerCharacter: TotemButtonsDB

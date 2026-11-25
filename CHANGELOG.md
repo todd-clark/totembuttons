@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.84
+
+- Keep the controller totem sweep above the in-range aura art and hide the macro label while Totem Buttons owns the slot.
+
+## 0.1.83
+
+- Use the regular button timer, range tint, and active spell artwork on the native controller crossbar.
+
 ## 0.1.82
 
 - Position controller flyouts above the crossbar slot captured at button-down, with a visible fallback if its coordinates are unavailable.
