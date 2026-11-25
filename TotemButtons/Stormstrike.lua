@@ -44,33 +44,33 @@ function addon.CreateStormstrikeAlert(deps)
     local function PaintResetGlow(animate)
         HideResetGlow()
         local shown = 0
+        local function PaintButton(button, action)
+            if not button:IsVisible() or not Readable(action) or type(action) ~= "number" or action <= 0 then return end
+            local kind, id = GetActionInfo(action)
+            if not Readable(kind) or not Readable(id) then return end
+            local isStormstrike = kind == "spell" and id == stormstrike
+            if kind == "macro" and id then
+                local spell = GetMacroSpell(id)
+                isStormstrike = Readable(spell) and spell == stormstrike
+            end
+            if not isStormstrike then return end
+            local glow = glows[button]
+            if not glow then
+                glow = CreateButtonHighlight(button, true)
+                glows[button] = glow
+            end
+            glow:Show()
+            if not animate then glow:ShowHaloOnly() end
+            shown = shown + 1
+        end
         for _, prefix in ipairs(barPrefixes) do
             local count = stockBars[prefix] and 12 or 180
             for index = 1, count do
                 local button = _G[prefix .. index]
-                if button and button:IsVisible() then
-                    local action = HostAction(button)
-                    if Readable(action) and type(action) == "number" and action > 0 then
-                        local kind, id = GetActionInfo(action)
-                        local isStormstrike = Readable(kind) and Readable(id) and kind == "spell" and id == stormstrike
-                        if not isStormstrike and Readable(kind) and kind == "macro" and Readable(id) and id then
-                            local spell = GetMacroSpell(id)
-                            isStormstrike = Readable(spell) and spell == stormstrike
-                        end
-                        if isStormstrike then
-                            local glow = glows[button]
-                            if not glow then
-                                glow = CreateButtonHighlight(button, true)
-                                glows[button] = glow
-                            end
-                            glow:Show()
-                            if not animate then glow:ShowHaloOnly() end
-                            shown = shown + 1
-                        end
-                    end
-                end
+                if button and button:IsVisible() then PaintButton(button, HostAction(button)) end
             end
         end
+        addon.ForEachGamepadActionButton(PaintButton)
         return shown
     end
 
@@ -188,5 +188,9 @@ function addon.CreateStormstrikeAlert(deps)
             HideResetGlow()
         end
     end)
-    return TestStormstrikeGlow, UpdateStormstrikeAlert
+    local function RefreshStormstrikeGlow()
+        if resetReady and Enabled() then PaintResetGlow(false) end
+    end
+
+    return TestStormstrikeGlow, UpdateStormstrikeAlert, RefreshStormstrikeGlow
 end

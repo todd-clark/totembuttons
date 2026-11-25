@@ -478,7 +478,8 @@ local function PaintSelection(state)
     local art = state.crossbarArt or state
     local selected = state.button:GetAttribute("spell1")
     local name = selected and C_Spell.GetSpellName(selected)
-    local texture = selected and C_Spell.GetSpellTexture(selected)
+    local displaySpell = art.alternateSpell or selected
+    local texture = displaySpell and C_Spell.GetSpellTexture(displaySpell)
     local effect = ActiveEffect(state, name)
     art.icon:SetTexture(texture or 134400)
     art.buttonTint = nil
@@ -490,7 +491,13 @@ local function PaintSelection(state)
     end
     if state.slot and art.host then UpdateTimedAuraArtwork(state) end
     PaintButtonTint(state, effect)
-    if state.kind == "nova" then PaintFireNovaTint(art.icon) end
+    if state.kind == "nova" then
+        if art.alternateSpell then
+            art.icon:SetDesaturated(false)
+        else
+            PaintFireNovaTint(art.icon)
+        end
+    end
     if selected and state.kind ~= "judgement" then TotemButtonsDB[state.key] = selected end
 
     local cooldown = art.cooldown
@@ -659,7 +666,8 @@ local function UpdateTotemRanges()
     local unit, map
     for _, state in ipairs(states) do
         if state.kind == "nova" and (state.crossbarArt or (state.host and state.button:IsVisible())) then
-            PaintFireNovaTint((state.crossbarArt or state).icon)
+            local art = state.crossbarArt or state
+            if not art.alternateSpell then PaintFireNovaTint(art.icon) end
         end
         if state.slot and (state.host or state.crossbarArt) then UpdateTimedAuraArtwork(state) end
         local effect = state.slot and state.effect
@@ -1230,9 +1238,9 @@ end
 
 -- A visual-only alert on the actual Stormstrike action slot. Keep a
 -- separate glow so hiding this alert does not cancel another addon's proc art.
-local TestStormstrikeGlow, UpdateStormstrikeAlert
+local TestStormstrikeGlow, UpdateStormstrikeAlert, RefreshStormstrikeGlow
 if isShaman then
-    TestStormstrikeGlow, UpdateStormstrikeAlert = addon.CreateStormstrikeAlert({
+    TestStormstrikeGlow, UpdateStormstrikeAlert, RefreshStormstrikeGlow = addon.CreateStormstrikeAlert({
         barPrefixes = barPrefixes,
         stockBars = stockBars,
         HostAction = HostAction,
@@ -1698,12 +1706,18 @@ local function Build(state)
             castButton:SetAttribute("*type-sentryview", "cancelaura")
         end
         SecureHandlerSetFrameRef(owner, "sentryStatus", sentryStatus)
-        castUnit = [[
-            local sentry = control:GetFrameRef("sentryStatus")
-            local spell = self:GetAttribute("spell1") or self:GetAttribute("spell")
-            if button == "LeftButton" and spell == 6495
-                and sentry:GetAttribute("state-sentrycombat") == "peace"
+        owner:SetAttribute("sentryViewAura", sentryName)
+        owner:SetAttribute("getSentryViewAura", [[
+            local spell = ...
+            local sentry = self:GetFrameRef("sentryStatus")
+            if spell == 6495 and sentry:GetAttribute("state-sentrycombat") == "peace"
                 and sentry:GetAttribute("sentryActive") then
+                return self:GetAttribute("sentryViewAura")
+            end
+        ]])
+        castUnit = [[
+            local spell = self:GetAttribute("spell1") or self:GetAttribute("spell")
+            if button == "LeftButton" and control:RunAttribute("getSentryViewAura", spell) then
                 self:SetAttribute("unit", nil)
                 return "sentryview", true
             end
@@ -2317,6 +2331,7 @@ RefreshCrossbarSlots = addon.CreateCrossbar({
     UpdateTimer = UpdateTimer,
     UpdateTimedAuraArtwork = UpdateTimedAuraArtwork,
     RaiseTotemCooldown = RaiseTotemCooldown,
+    RefreshStormstrikeGlow = RefreshStormstrikeGlow,
     HideMacroLabel = HideMacroLabel,
     RestoreMacroLabel = RestoreMacroLabel,
 })

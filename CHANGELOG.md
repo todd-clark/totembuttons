@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.1.89
+
+- Tap an active Sentry Totem on the native controller crossbar to switch views out of combat.
+
+## 0.1.88
+
+- Show the Stormstrike reset indicator on native gamepad crossbar buttons, including after changing layers during a reset.
+
+## 0.1.87
+
+- Show the Magma Totem icon when holding Fire Nova on the controller crossbar has reached the cast threshold.
+
+## 0.1.86
+
+- Hold and release the Fire Nova slot on the native gamepad crossbar to drop Magma Totem. A tap still casts Fire Nova.
+
 ## 0.1.85
 
 - Reuse existing macros when placing buttons in Gamepad UI. Each crossbar slot keeps its own spell selection.

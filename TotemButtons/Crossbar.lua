@@ -8,6 +8,19 @@ function addon.IsGamepadUIEnabled()
     return main and main:IsShown()
 end
 
+function addon.ForEachGamepadActionButton(visit)
+    local main = GamepadMainActionBarFrame
+    local page = main and main.PageUnit
+    if not page or not page.actionBars or not addon.IsGamepadUIEnabled() then return end
+    for _, bar in pairs(page.actionBars) do
+        for _, button in ipairs(bar.actionButtons or {}) do
+            if button.GetGamepadPageUnitSlotID and button:GetGamepadPageUnitSlotID() then
+                visit(button, button:GetID())
+            end
+        end
+    end
+end
+
 function addon.CreateCrossbar(deps)
     local Readable = deps.Readable
     local flyoutNavigation = deps.flyoutNavigation
@@ -26,6 +39,9 @@ function addon.CreateCrossbar(deps)
             -- Keep both edges on the native binding. Rebinding a key while it
             -- is down can lose its release, especially on a quick tap.
             local flyout = control:GetFrameRef("slot" .. self:GetID())
+            if ticks[physical] == "alternate" then
+                pending[physical]:CallMethod("ShowAlternateIcon")
+            end
             pending[physical], pressed[physical], ticks[physical] = nil, nil, nil
             if not flyout then return end
             -- Capture the slot before a layer change can hide or move it.
@@ -59,11 +75,15 @@ function addon.CreateCrossbar(deps)
         end
 
         local keyButton = flyout:GetFrameRef("keyButton")
-        local spell = keyButton:GetAttribute("spell")
+        local spell = keyButton:GetAttribute(elapsed == "alternate" and "spell2" or "spell")
+        if elapsed == "alternate" then flyout:CallMethod("ShowAlternateIcon") end
         if not spell then return false end
         local owner = flyout:GetFrameRef("castOwner")
-        local unit = owner:RunAttribute("resolveMouseoverUnit", spell)
-        self:SetAttribute("*spell-TotemButtonsRelease", spell)
+        local aura = owner:RunAttribute("getSentryViewAura", spell)
+        local unit
+        if not aura then unit = owner:RunAttribute("resolveMouseoverUnit", spell) end
+        self:SetAttribute("*type-TotemButtonsRelease", aura and "cancelaura" or "spell")
+        self:SetAttribute("*spell-TotemButtonsRelease", aura or spell)
         self:SetAttribute("*unit-TotemButtonsRelease", unit)
         self:SetAttribute("tbPreviousKeyDown", self:GetAttribute("useOnKeyDown"))
         self:SetAttribute("useOnKeyDown", false)
@@ -72,6 +92,7 @@ function addon.CreateCrossbar(deps)
     local afterClick = [[
         self:SetAttribute("useOnKeyDown", self:GetAttribute("tbPreviousKeyDown"))
         self:SetAttribute("tbPreviousKeyDown", nil)
+        self:SetAttribute("*type-TotemButtonsRelease", nil)
         self:SetAttribute("*spell-TotemButtonsRelease", nil)
         self:SetAttribute("*unit-TotemButtonsRelease", nil)
     ]]
@@ -88,6 +109,7 @@ function addon.CreateCrossbar(deps)
                 deps.UpdateTimedAuraArtwork(previous)
             end
             art.state = state
+            art.alternateSpell = nil
             art.paintedStart, art.paintedDuration, art.paintedRate, art.paintedTimer = nil, nil, nil, nil
             art.showingSpellCooldown = nil
             art.paintingCooldown = true
@@ -134,6 +156,9 @@ function addon.CreateCrossbar(deps)
             controller:Execute([[ pending, pressed, ticks = newtable(), newtable(), newtable() ]])
             SecureHandlerSetFrameRef(controller, "navigation", flyoutNavigation)
             SecureHandlerWrapScript(main, "OnHide", controller, [[
+                for physical, count in pairs(ticks) do
+                    if count == "alternate" then pending[physical]:CallMethod("ShowAlternateIcon") end
+                end
                 pending, pressed, ticks = newtable(), newtable(), newtable()
                 local flyout = control:GetFrameRef("navigation"):GetAttribute("activeFlyout")
                 if flyout and flyout:GetAttribute("inputMode") == "gamepad" then flyout:Hide() end
@@ -144,15 +169,19 @@ function addon.CreateCrossbar(deps)
                 if not newstate then return end
                 local held
                 for physical, count in pairs(ticks) do
-                    if count ~= "opened" then
+                    if type(count) == "number" then
                         count = count + 1
                         local flyout = pending[physical]
-                        if count >= 2 and flyout:GetAttribute("hasChoices") then
+                        if count < 2 then
+                            ticks[physical] = count
+                            held = true
+                        elseif flyout:GetAttribute("hasChoices") then
                             ticks[physical] = "opened"
                             flyout:RunAttribute("openInputFlyout", "gamepad", pressed[physical], true)
                         else
-                            ticks[physical] = count
-                            held = true
+                            local alternate = flyout:GetFrameRef("keyButton"):GetAttribute("spell2")
+                            ticks[physical] = alternate and "alternate" or "tap"
+                            if alternate then flyout:CallMethod("ShowAlternateIcon", alternate) end
                         end
                     end
                 end
@@ -168,7 +197,6 @@ function addon.CreateCrossbar(deps)
                     and GamepadActionBarBindingUtil.IsBindablePageUnitSlotID(slotID) then
                     button:RegisterForClicks("AnyDown", "AnyUp")
                     button:SetAttribute("tbPhysicalButton", physical)
-                    button:SetAttribute("*type-TotemButtonsRelease", "spell")
                     SecureHandlerWrapScript(button, "OnClick", controller, beforeClick, afterClick)
                     local nativeIcon = button.icon
                     local layer, sublevel = nativeIcon:GetDrawLayer()
@@ -210,6 +238,9 @@ function addon.CreateCrossbar(deps)
             end
             main:HookScript("OnShow", RefreshAfterModeChange)
             main:HookScript("OnHide", RefreshAfterModeChange)
+            if deps.RefreshStormstrikeGlow and main.PageUnit.RegisterCallback then
+                main.PageUnit:RegisterCallback("ACTIVE_ACTION_BAR_UPDATED_EVENT", deps.RefreshStormstrikeGlow)
+            end
         end
         local previous = crossbarSlots
         crossbarSlots = {}
@@ -228,6 +259,12 @@ function addon.CreateCrossbar(deps)
                         TotemButtonsDB[key] = TotemButtonsDB[key] or TotemButtonsDB[original.key]
                         state = RegisterCopy(original, key, original.label .. " (crossbar " .. action .. ")")
                         state.crossbarSlot = action
+                        function state.flyout:ShowAlternateIcon(spell)
+                            local art = state.crossbarArt
+                            if not art or art.alternateSpell == spell then return end
+                            art.alternateSpell = spell
+                            deps.UpdateTimer(state)
+                        end
                     end
                     crossbarSlots[action] = state
                     if previous[action] ~= state then

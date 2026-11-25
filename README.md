@@ -2,7 +2,7 @@
 
 Totem Buttons adds class-specific buttons to your existing action bars in World of Warcraft Forever. Hover over a button to choose a spell, then click the button or use the slot's keybind to cast.
 
-- **Shaman:** Add buttons for fire, earth, water, and air totems, weapon imbues, shields, or Fire Nova. See totem timers and range indicators where available. Right-click a totem button to dismiss its active totem. Out of combat, left-click or use the slot keybind to switch views when Sentry Totem is active. Fire Nova grays out when the addon can't confirm an active fire totem. Hold the selected keyboard flyout modifier while clicking Fire Nova or pressing its keybind to drop Magma Totem.
+- **Shaman:** Add buttons for fire, earth, water, and air totems, weapon imbues, shields, or Fire Nova. See totem timers and range indicators where available. Right-click a totem button to dismiss its active totem. Out of combat, left-click, use the slot keybind, or tap the controller slot to switch views when Sentry Totem is active. Fire Nova grays out when the addon can't confirm an active fire totem. Hold the selected keyboard flyout modifier while clicking Fire Nova or pressing its keybind to drop Magma Totem. On the native crossbar, hold the Fire Nova slot button and release to drop Magma Totem.
 - **Paladin:** Add separate aura, seal, and buff buttons. Auras and seals can cast on selection or save the choice for the slot's usual keybind. The buttons show whether the selected effect is active on you, with countdowns for timed seals and buffs.
 
 ## Installation
@@ -30,7 +30,7 @@ In WoW Forever, check the following after changing secure input or aura handling
 - Open a keyboard flyout with the cursor locked, scroll, and release the modifier. Confirm that the next press casts the selected spell and that opening without scrolling preserves the selection.
 - From a held controller layer, tap to cast and long-press to open the flyout. Release the layer button before and after the slot button in separate attempts. Confirm D-pad navigation, A selection, and B cancellation while in combat.
 - Check a native aura overlay while fading its host bar, then hide and reveal the bar with a live aura.
-- Pick a different totem in combat, check Ctrl + Fire Nova still casts Magma Totem, and trigger an early Stormstrike reset at 2/2 Improved Stormstrike.
+- Pick a different totem in combat, check the selected modifier plus Fire Nova and a controller hold both cast Magma Totem, and trigger an early Stormstrike reset at 2/2 Improved Stormstrike.
 - Check Judgement before and after sealing, during combat, and between dungeon pulls.
 
 ## Highlight texture

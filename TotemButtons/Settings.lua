@@ -139,7 +139,7 @@ function addon.BuildSettings(deps)
 
     local shortcutText
     if isShaman then
-        shortcutText = "Right-click to dismiss a totem.\nWith Sentry Totem active, click or use its keybind to switch views out of combat.\nUse the selected modifier with Fire Nova to drop Magma Totem."
+        shortcutText = "Right-click to dismiss a totem.\nWith Sentry Totem active, click, use its keybind, or tap on gamepad to switch views out of combat.\nUse the modifier with Fire Nova to drop Magma Totem.\nOn gamepad, hold Fire Nova until the icon changes, then release."
     else
         shortcutText = "Pick a seal from the Judgement flyout.\nThe button casts that seal when none is active out of combat, and casts Judgement in combat."
     end
