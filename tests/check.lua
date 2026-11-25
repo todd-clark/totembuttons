@@ -17,6 +17,8 @@ for filename in toc:gmatch("[^\r\n]+") do
         local path = folder .. filename
         sources[#sources + 1] = { path = path, chunk = assert(loadfile(path)) }
         local source = read(path)
+        -- Texture paths may also use long strings. Only compile the remaining code snippets.
+        source = source:gsub("SetTexture%(%[%[.-%]%]%)", "")
         for snippet in source:gmatch("%[%[(.-)%]%]") do
             assert(loadstring(snippet, path .. " (secure snippet)"))
         end
