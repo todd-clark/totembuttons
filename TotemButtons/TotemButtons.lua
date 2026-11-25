@@ -169,13 +169,19 @@ local function CreateTimedAuraLayer(state, baseSpell, buffIDs)
         shownAuraLayers[self] = nil
         if not next(shownAuraLayers) then auraOpacityFrame:Hide() end
     end)
-    local container = CreateFrame("AuraContainer", nil, host, "CustomAuraContainerTemplate")
-    container:SetPoint("CENTER", host, "CENTER")
+    local content = CreateFrame("Frame", nil, host)
+    content:SetPoint("CENTER", host, "CENTER")
+    content:SetSize(shieldAuraSize, shieldAuraSize)
+    local container = CreateFrame("AuraContainer", nil, content, "CustomAuraContainerTemplate")
+    container:SetPoint("CENTER", content, "CENTER")
     container:SetSize(shieldAuraSize, shieldAuraSize)
     local setAnchor = container.SetFlowLayoutAnchorPoint or container.SetAuraLayoutAnchorPoint
     if setAnchor then setAnchor(container, "CENTER") end
 
-    local layer = { host = host, container = container, buttons = {}, baseSpell = baseSpell }
+    local layer = {
+        host = host, content = content, container = container, buttons = {}, baseSpell = baseSpell,
+        artWidth = shieldAuraSize, artHeight = shieldAuraSize, artScale = 1,
+    }
     local include = {}
     if not buffIDs then include[baseSpell] = true end
     for _, spell in ipairs(buffIDs or timedAuraRanks[baseSpell] or {}) do include[spell] = true end
@@ -188,7 +194,8 @@ local function CreateTimedAuraLayer(state, baseSpell, buffIDs)
         maxFrameCount = 1,
         layout = { anchorPoint = "CENTER", padding = { 0, 0, 0, 0 } },
         initializeFrame = function(button)
-            local width, height = layer.width or shieldAuraSize, layer.height or shieldAuraSize
+            if button:IsForbidden() then return end
+            local width, height = layer.artWidth, layer.artHeight
             button:SetSize(width, height)
             local icon = button:CreateTexture(nil, "ARTWORK")
             icon:SetPoint("CENTER", button, "CENTER")
@@ -257,10 +264,13 @@ local function UpdateTimedAuraArtwork(state)
 
     for spellName, layer in pairs(state.nativeAuraLayers) do
         local show = visible and spellName == name
-        if visible and (show or totem) and canUpdateLayout then
+        -- Crossbar layers can move in combat. Reposition the addon-owned
+        -- overlay independently of changes to the native aura children.
+        if visible and (show or totem) and (canUpdateLayout or state.crossbarArt) then
             local x, y = art.icon:GetCenter()
             local width, height = art.icon:GetSize()
-            if x and y and width > 0 and height > 0 then
+            if Readable(x) and Readable(y) and Readable(width) and Readable(height)
+                and x and y and width and height and width > 0 and height > 0 then
                 -- Match the gray artwork. Its mask is positioned independently.
                 local ratio = button:GetEffectiveScale() / UIParent:GetEffectiveScale()
                 width, height = width * ratio, height * ratio
@@ -278,40 +288,53 @@ local function UpdateTimedAuraArtwork(state)
                     layer.width, layer.height = width, height
                     layer.strata, layer.level = strata, level
                 end
-                if not totem and selected and not layer.spells[selected] and layer.container.SetAuraGroupCandidateFilters then
-                    layer.spells[selected] = true
-                    layer.container:SetAuraGroupCandidateFilters("shield", { includeSpellIDs = layer.spells })
+                -- Resize the addon-owned parent during combat so the native
+                -- aura icon fills the slot without editing its restricted child.
+                local artScale = canUpdateLayout and 1
+                    or math.max(width / layer.artWidth, height / layer.artHeight)
+                if artScale ~= layer.artScale then
+                    layer.content:SetScale(artScale)
+                    layer.artScale = artScale
                 end
-                local slotMask = art.slotMask
-                local texture = C_Spell.GetSpellTexture(show and selected or layer.baseSpell)
-                for _, auraButton in ipairs(layer.buttons) do
-                    if resized or auraButton.width ~= width or auraButton.height ~= height then
-                        auraButton.button:SetSize(width, height)
-                        auraButton.icon:SetSize(width, height)
-                        auraButton.width, auraButton.height = width, height
+                if canUpdateLayout then
+                    layer.artWidth, layer.artHeight = width, height
+                    if not totem and selected and not layer.spells[selected] and layer.container.SetAuraGroupCandidateFilters then
+                        layer.spells[selected] = true
+                        layer.container:SetAuraGroupCandidateFilters("shield", { includeSpellIDs = layer.spells })
                     end
-                    if auraButton.mask ~= slotMask then
-                        if auraButton.mask then auraButton.icon:RemoveMaskTexture(auraButton.mask) end
-                        if slotMask and not pcall(auraButton.icon.AddMaskTexture, auraButton.icon, slotMask) then
-                            slotMask = nil
-                        end
-                        auraButton.mask = slotMask
-                    end
-                    if resized or auraButton.artRevision ~= state.auraArtRevision then
-                        auraButton.icon:SetTexCoord(art.icon:GetTexCoord())
-                        auraButton.artRevision = state.auraArtRevision
-                    end
-                    if texture and auraButton.texture ~= texture then
-                        auraButton.icon:SetTexture(texture)
-                        auraButton.texture = texture
-                    end
-                    PaintAuraManaTint(auraButton, state.lowMana == true)
-                    if auraButton.cooldown then
-                        UpdateCountdownFont(auraButton, button:GetWidth() * ratio, button:GetHeight() * ratio)
-                        local hideNumbers = TotemButtonsDB.showCountdown == false
-                        if auraButton.hideNumbers ~= hideNumbers then
-                            auraButton.cooldown:SetHideCountdownNumbers(hideNumbers)
-                            auraButton.hideNumbers = hideNumbers
+                    local slotMask = art.slotMask
+                    local texture = C_Spell.GetSpellTexture(show and selected or layer.baseSpell)
+                    for _, auraButton in ipairs(layer.buttons) do
+                        if not auraButton.button:IsForbidden() then
+                            if resized or auraButton.width ~= width or auraButton.height ~= height then
+                                auraButton.button:SetSize(width, height)
+                                auraButton.icon:SetSize(width, height)
+                                auraButton.width, auraButton.height = width, height
+                            end
+                            if auraButton.mask ~= slotMask then
+                                if auraButton.mask then auraButton.icon:RemoveMaskTexture(auraButton.mask) end
+                                if slotMask and not pcall(auraButton.icon.AddMaskTexture, auraButton.icon, slotMask) then
+                                    slotMask = nil
+                                end
+                                auraButton.mask = slotMask
+                            end
+                            if resized or auraButton.artRevision ~= state.auraArtRevision then
+                                auraButton.icon:SetTexCoord(art.icon:GetTexCoord())
+                                auraButton.artRevision = state.auraArtRevision
+                            end
+                            if texture and auraButton.texture ~= texture then
+                                auraButton.icon:SetTexture(texture)
+                                auraButton.texture = texture
+                            end
+                            PaintAuraManaTint(auraButton, state.lowMana == true)
+                            if auraButton.cooldown then
+                                UpdateCountdownFont(auraButton, button:GetWidth() * ratio, button:GetHeight() * ratio)
+                                local hideNumbers = TotemButtonsDB.showCountdown == false
+                                if auraButton.hideNumbers ~= hideNumbers then
+                                    auraButton.cooldown:SetHideCountdownNumbers(hideNumbers)
+                                    auraButton.hideNumbers = hideNumbers
+                                end
+                            end
                         end
                     end
                 end
@@ -340,7 +363,9 @@ local function UpdateLowMana(state, spell)
     state.lowMana = lowMana
     if state.nativeAuraLayers then
         for _, layer in pairs(state.nativeAuraLayers) do
-            for _, art in ipairs(layer.buttons) do PaintAuraManaTint(art, lowMana) end
+            for _, art in ipairs(layer.buttons) do
+                if not art.button:IsForbidden() then PaintAuraManaTint(art, lowMana) end
+            end
         end
     end
     return true
@@ -365,6 +390,55 @@ local function PaintButtonTint(state, effect)
         art.icon:SetVertexColor(1, 1, 1)
     end
     art.buttonTint = color
+end
+
+local function CreateGlobalCooldown(button)
+    local cooldown = CreateFrame("Cooldown", nil, button, "CooldownFrameTemplate")
+    cooldown:SetAllPoints()
+    cooldown:SetDrawSwipe(true)
+    cooldown:SetDrawEdge(false)
+    cooldown:SetDrawBling(false)
+    cooldown:SetHideCountdownNumbers(true)
+    cooldown.noCooldownCount = true
+    cooldown:SetSwipeColor(0, 0, 0, 0.65)
+    return cooldown
+end
+
+-- Forever exposes the GCD through the Classic reference spell.
+local globalCooldownSpell = 29515
+local gcdTimer, gcdStart, gcdDuration, gcdRate
+local gcdDirty = true
+local gcdRevision = 0
+local function PaintGlobalCooldown(art, spell)
+    local cooldown = art.gcd
+    if not spell then
+        if art.gcdSample then cooldown:Clear() end
+        art.gcdSample = nil
+        return
+    end
+    if gcdDirty then
+        gcdDirty = false
+        gcdRevision = gcdRevision + 1
+        gcdTimer = C_Spell.GetSpellCooldownDuration and C_Spell.GetSpellCooldownDuration(globalCooldownSpell)
+        gcdStart, gcdDuration, gcdRate = nil, nil, nil
+        if not gcdTimer then
+            local info = C_Spell.GetSpellCooldown(globalCooldownSpell)
+            if Readable(info) and info and Readable(info.startTime) and Readable(info.duration)
+                and Readable(info.modRate) and info.startTime and info.duration
+                and info.startTime > 0 and info.duration > 0 and info.startTime + info.duration > GetTime() then
+                gcdStart, gcdDuration, gcdRate = info.startTime, info.duration, info.modRate
+            end
+        end
+    end
+    if art.gcdSample == gcdRevision then return end
+    art.gcdSample = gcdRevision
+    if gcdTimer and cooldown.SetCooldownFromDurationObject then
+        cooldown:SetCooldownFromDurationObject(gcdTimer)
+    elseif gcdStart then
+        cooldown:SetCooldown(gcdStart, gcdDuration, gcdRate or 1)
+    else
+        cooldown:Clear()
+    end
 end
 
 local function ReadSpellCooldown(spell, cooldown)
@@ -500,6 +574,7 @@ local function PaintSelection(state)
     end
     if selected and state.kind ~= "judgement" then TotemButtonsDB[state.key] = selected end
 
+    PaintGlobalCooldown(art, selected)
     local cooldown = art.cooldown
     if state.crossbarArt then UpdateCountdownFont(art, art.host:GetSize()) end
     local hideNumbers = TotemButtonsDB.showCountdown == false
@@ -1026,17 +1101,10 @@ local function NeedsTracking()
         if state.crossbarArt or (state.host and state.button:IsVisible()) then
             local effect = state.slot and state.effect
             if effect and ActiveEffect(state, effect.name) then return true end
-            if UsesTimedAura(state) then
-                if state.displayedEffect and not state.displayedEffect.expired then return true end
-                for _, layer in pairs(state.nativeAuraLayers or {}) do
-                    if layer.host:IsVisible() then
-                        for _, art in ipairs(layer.buttons) do
-                            local visible = art.button:IsVisible()
-                            if Readable(visible) and visible then return true end
-                        end
-                    end
-                end
-            end
+            -- Native aura containers own their timers. Only the fallback
+            -- effect needs polling here, since native children can be restricted.
+            if UsesTimedAura(state) and state.displayedEffect
+                and not state.displayedEffect.expired then return true end
         end
     end
     return false
@@ -1780,6 +1848,7 @@ local function Build(state)
     end)
     local cooldown = CreateFrame("Cooldown", nil, button, "CooldownFrameTemplate")
     state.cooldown = cooldown
+    state.gcd = CreateGlobalCooldown(button)
     button:HookScript("OnSizeChanged", function(_, width, height)
         if state.host then UpdateCountdownFont(state, width, height) end
     end)
@@ -2209,6 +2278,8 @@ local function FitSlotArtwork(state, host)
     local inset = mask and 0 or 1
     cooldown:SetPoint("TOPLEFT", bounds, "TOPLEFT", inset, -inset)
     cooldown:SetPoint("BOTTOMRIGHT", bounds, "BOTTOMRIGHT", -inset, inset)
+    state.gcd:ClearAllPoints()
+    state.gcd:SetAllPoints(cooldown)
     local countdownText = cooldown.GetCountdownFontString and cooldown:GetCountdownFontString()
     if countdownText then
         countdownText:ClearAllPoints()
@@ -2219,11 +2290,12 @@ local function FitSlotArtwork(state, host)
     local swipeTexture = mask and mask:GetTexture() or ""
     if swipeTexture ~= state.swipeTexture then
         cooldown:SetSwipeTexture(swipeTexture)
+        state.gcd:SetSwipeTexture(swipeTexture)
         state.swipeTexture = swipeTexture
     end
 
     if mask == state.slotMask then return end
-    for _, region in ipairs({icon, cooldown}) do
+    for _, region in ipairs({icon, cooldown, state.gcd}) do
         if state.slotMask and region.RemoveMaskTexture then
             region:RemoveMaskTexture(state.slotMask)
         end
@@ -2244,6 +2316,8 @@ local function RefreshSlotArtwork(state, host)
     if state.slot then
         RaiseTotemCooldown(state.cooldown, state.button)
     end
+    state.gcd:SetFrameStrata(state.button:GetFrameStrata())
+    state.gcd:SetFrameLevel(state.button:GetFrameLevel() + 7)
     FitSlotArtwork(state, host)
     UpdateCountdownFont(state, host:GetSize())
 end
@@ -2325,6 +2399,7 @@ RefreshCrossbarSlots = addon.CreateCrossbar({
     UpdateTimer = UpdateTimer,
     UpdateTimedAuraArtwork = UpdateTimedAuraArtwork,
     RaiseTotemCooldown = RaiseTotemCooldown,
+    CreateGlobalCooldown = CreateGlobalCooldown,
     RefreshStormstrikeGlow = RefreshStormstrikeGlow,
     HideMacroLabel = HideMacroLabel,
     RestoreMacroLabel = RestoreMacroLabel,
@@ -2615,6 +2690,7 @@ if isPaladin then
     events:RegisterEvent("UPDATE_SHAPESHIFT_FORM")
     events:RegisterEvent("UPDATE_SHAPESHIFT_FORMS")
 end
+local capturedGamepadInteractBlock
 events:SetScript("OnEvent", function(_, event, slot, action, spellID)
     if event == "PLAYER_ENTERING_WORLD" or event == "PLAYER_REGEN_ENABLED"
         or (event == "PLAYER_TOTEM_UPDATE" and (not Readable(slot) or slot == nil or slot == 4)) then
@@ -2634,6 +2710,14 @@ events:SetScript("OnEvent", function(_, event, slot, action, spellID)
                 print("Totem Buttons: " .. report)
             end
             TotemButtonsDB.lastBlockedAction = report
+            if type(action) == "string" and action:find("SetPreferredGamepadInteractTarget", 1, true)
+                and not capturedGamepadInteractBlock then
+                capturedGamepadInteractBlock = true
+                TotemButtonsDB.lastGamepadInteractBlock = {
+                    report = report,
+                    stack = debugstack(2, 24, 0),
+                }
+            end
         end
         return
     end
@@ -2726,9 +2810,14 @@ events:SetScript("OnEvent", function(_, event, slot, action, spellID)
             end
         end
     elseif event == "SPELL_UPDATE_COOLDOWN" then
+        gcdDirty = true
         for _, state in ipairs(states) do
-            if (state.host or state.crossbarArt) and (state.slot or state.kind == "nova" or state.kind == "judgement") then
-                PaintSelection(state)
+            if state.host or state.crossbarArt then
+                if state.slot or state.kind == "nova" or state.kind == "judgement" then
+                    PaintSelection(state)
+                else
+                    PaintGlobalCooldown(state.crossbarArt or state, state.button:GetAttribute("spell1"))
+                end
             end
         end
     elseif event == "PLAYER_TOTEM_UPDATE" then

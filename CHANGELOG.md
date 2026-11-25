@@ -1,5 +1,54 @@
 # Changelog
 
+## 0.2.01
+
+- Release the current controller, flyout, and cooldown updates as 0.2.01.
+
+
+## 0.1.102
+
+- Refresh the shared GCD sample only on cooldown events and skip redundant crossbar visibility writes.
+
+## 0.1.101
+
+- Read the GCD from WoW Forever's reference spell so the sweep receives an active cooldown.
+
+## 0.1.100
+
+- Show a separate global cooldown sweep on regular and native gamepad Totem Buttons without replacing their active-effect timers.
+
+## 0.1.99
+
+- Scale the in-range aura artwork to match the crossbar icon when a controller layer expands in combat, preventing red edges from showing through.
+
+## 0.1.98
+
+- Refresh the controller grid from one slot snapshot, detach stale artwork before repainting, and refresh position changes even when button size stays the same.
+
+## 0.1.97
+
+- Keep in-range totem artwork aligned with the native crossbar when controller layers move in combat.
+
+## 0.1.96
+
+- Stop polling Blizzard-owned aura children for visibility. Their native timers update independently.
+
+## 0.1.95
+
+- Skip native aura buttons when WoW marks them forbidden, preventing errors during timer tracking and aura artwork updates.
+
+## 0.1.94
+
+- Record the first blocked native gamepad interaction call and its Lua stack each session to diagnose the loot popup.
+
+## 0.1.93
+
+- Remove addon registration from Blizzard's crossbar focus callbacks to reduce taint during loot transitions. Refresh the Stormstrike glow through the queued artwork updates instead.
+
+## 0.1.92
+
+- Defer crossbar visual updates from Blizzard focus and layout callbacks, and guard unavailable slot state during UI transitions such as looting.
+
 ## 0.1.91
 
 - Restore the controller Sentry Totem view toggle through a dedicated secure action.

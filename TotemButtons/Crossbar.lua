@@ -105,27 +105,31 @@ function addon.CreateCrossbar(deps)
         self:SetAttribute("*spell-TotemButtonsSentryView", nil)
     ]]
 
-    local function UpdateCrossbarIcon(button)
+    local function ReadCrossbarSlot(button)
         local action = button:GetID()
-        local state = Readable(action) and crossbarSlots[action]
+        local visible = button:IsVisible()
+        if Readable(action) and action and Readable(visible) and visible then
+            return crossbarSlots[action]
+        end
+    end
+
+    local function UpdateCrossbarIcon(button, state)
         local art = crossbarButtons[button]
-        if state and not button:IsVisible() then state = nil end
         local previous = art.state
         if previous ~= state then
-            if previous and previous.crossbarArt == art then
-                previous.crossbarArt = nil
-                deps.UpdateTimedAuraArtwork(previous)
-            end
             art.state = state
             art.alternateSpell = nil
+            art.gcdSample = nil
+            art.gcd:Clear()
             art.paintedStart, art.paintedDuration, art.paintedRate, art.paintedTimer = nil, nil, nil, nil
             art.showingSpellCooldown = nil
             art.paintingCooldown = true
             art.cooldown:Clear()
             art.paintingCooldown = nil
+            art.icon:SetShown(state ~= nil)
+            art.cooldown:SetShown(state ~= nil)
+            art.gcd:SetShown(state ~= nil)
         end
-        art.icon:SetShown(state ~= nil)
-        art.cooldown:SetShown(state ~= nil)
         if not state then
             deps.RestoreMacroLabel(art)
             return
@@ -138,13 +142,21 @@ function addon.CreateCrossbar(deps)
             art.slotMask = mask
             local bounds = mask or button.icon
             art.cooldown:SetAllPoints(bounds)
-            art.cooldown:SetSwipeTexture(mask and mask:GetTexture() or "")
+            local swipe = mask and mask:GetTexture() or ""
+            art.cooldown:SetSwipeTexture(swipe)
+            art.gcd:SetAllPoints(bounds)
+            art.gcd:SetSwipeTexture(swipe)
         end
         local width, height = button:GetSize()
+        local x, y = art.icon:GetCenter()
+        if not Readable(x) then x = nil end
+        if not Readable(y) then y = nil end
         local strata, level = button:GetFrameStrata(), button:GetFrameLevel()
         local changedLayer = art.strata ~= strata or art.level ~= level
         if previous ~= state or changedLayer then
             art.strata, art.level = strata, level
+            art.gcd:SetFrameStrata(strata)
+            art.gcd:SetFrameLevel(level + 7)
             if state.slot then
                 deps.RaiseTotemCooldown(art.cooldown, button)
             else
@@ -152,10 +164,39 @@ function addon.CreateCrossbar(deps)
                 art.cooldown:SetFrameLevel(level + 1)
             end
         end
-        if previous ~= state or changedMask or changedLayer or art.width ~= width or art.height ~= height then
-            art.width, art.height = width, height
+        if previous ~= state or changedMask or changedLayer or art.width ~= width or art.height ~= height
+            or art.x ~= x or art.y ~= y then
+            art.width, art.height, art.x, art.y = width, height, x, y
             deps.UpdateTimer(state)
         end
+    end
+
+    local visualRefreshQueued
+    local function RefreshCrossbarVisuals()
+        -- Snapshot the entire grid before painting. A page change can move a
+        -- slot between frames, so detach old owners before updating new ones.
+        for button, art in pairs(crossbarButtons) do
+            art.nextState = ReadCrossbarSlot(button)
+            local previous = art.state
+            if previous and previous ~= art.nextState and previous.crossbarArt == art then
+                previous.crossbarArt = nil
+                deps.UpdateTimedAuraArtwork(previous)
+            end
+        end
+        for button, art in pairs(crossbarButtons) do
+            UpdateCrossbarIcon(button, art.nextState)
+            art.nextState = nil
+        end
+        if deps.RefreshStormstrikeGlow then deps.RefreshStormstrikeGlow() end
+    end
+
+    local function QueueCrossbarVisuals()
+        if visualRefreshQueued then return end
+        visualRefreshQueued = true
+        C_Timer.After(0, function()
+            visualRefreshQueued = false
+            RefreshCrossbarVisuals()
+        end)
     end
 
     local function HookCrossbarButtons(main)
@@ -213,6 +254,7 @@ function addon.CreateCrossbar(deps)
                     local icon = button:CreateTexture(nil, layer, nil, math.min((sublevel or 0) + 1, 7))
                     icon:SetAllPoints(nativeIcon)
                     icon:SetTexCoord(nativeIcon:GetTexCoord())
+                    icon:Hide()
                     -- Blizzard toggles the active mask when the bar changes shape.
                     if button.CircleMask then icon:AddMaskTexture(button.CircleMask) end
                     if button.SquareMask then icon:AddMaskTexture(button.SquareMask) end
@@ -221,17 +263,20 @@ function addon.CreateCrossbar(deps)
                     cooldown:SetDrawEdge(false)
                     cooldown:SetDrawBling(false)
                     cooldown:Hide()
-                    local art = { host = button, icon = icon, cooldown = cooldown }
+                    local gcd = deps.CreateGlobalCooldown(button)
+                    gcd:SetAllPoints(nativeIcon)
+                    gcd:Hide()
+                    local art = { host = button, icon = icon, cooldown = cooldown, gcd = gcd }
                     crossbarButtons[button] = art
                     cooldown:HookScript("OnCooldownDone", function()
                         if art.state and not art.paintingCooldown then deps.UpdateTimer(art.state) end
                     end)
-                    hooksecurefunc(button, "UpdateAction", UpdateCrossbarIcon)
-                    hooksecurefunc(button, "SetShapeToCircle", UpdateCrossbarIcon)
-                    hooksecurefunc(button, "SetShapeToSquare", UpdateCrossbarIcon)
-                    button:HookScript("OnShow", UpdateCrossbarIcon)
-                    button:HookScript("OnHide", UpdateCrossbarIcon)
-                    button:HookScript("OnSizeChanged", UpdateCrossbarIcon)
+                    hooksecurefunc(button, "UpdateAction", QueueCrossbarVisuals)
+                    hooksecurefunc(button, "SetShapeToCircle", QueueCrossbarVisuals)
+                    hooksecurefunc(button, "SetShapeToSquare", QueueCrossbarVisuals)
+                    button:HookScript("OnShow", QueueCrossbarVisuals)
+                    button:HookScript("OnHide", QueueCrossbarVisuals)
+                    button:HookScript("OnSizeChanged", QueueCrossbarVisuals)
                 end
             end
         end
@@ -248,9 +293,6 @@ function addon.CreateCrossbar(deps)
             end
             main:HookScript("OnShow", RefreshAfterModeChange)
             main:HookScript("OnHide", RefreshAfterModeChange)
-            if deps.RefreshStormstrikeGlow and main.PageUnit.RegisterCallback then
-                main.PageUnit:RegisterCallback("ACTIVE_ACTION_BAR_UPDATED_EVENT", deps.RefreshStormstrikeGlow)
-            end
         end
         local previous = crossbarSlots
         crossbarSlots = {}
@@ -289,7 +331,7 @@ function addon.CreateCrossbar(deps)
                 state.flyout:Hide()
             end
         end
-        for button in pairs(crossbarButtons) do UpdateCrossbarIcon(button) end
+        RefreshCrossbarVisuals()
     end
     return RefreshCrossbarSlots
 end
