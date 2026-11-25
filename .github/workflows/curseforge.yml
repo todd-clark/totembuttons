@@ -3,9 +3,10 @@ name: Publish to CurseForge
 on:
   push:
     branches: [main]
+  pull_request:
 
 concurrency:
-  group: curseforge-release
+  group: curseforge-${{ github.event_name == 'push' && 'release' || github.ref }}
   queue: max
 
 permissions:
@@ -17,7 +18,24 @@ defaults:
     shell: bash
 
 jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install Lua 5.1
+        run: sudo apt-get update && sudo apt-get install -y lua5.1
+      - name: Check addon syntax and behavior
+        run: |
+          lua5.1 tests/check.lua
+          python3 scripts/generate_highlight_border.py --check
+          python3 scripts/package.py "$RUNNER_TEMP/TotemButtons-check.zip"
+          unzip -p "$RUNNER_TEMP/TotemButtons-check.zip" TotemButtons/TotemButtons.lua | luac5.1 -p -
+
   publish:
+    if: github.event_name == 'push'
+    needs: verify
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -94,7 +112,7 @@ jobs:
             exit 0
           fi
           archive="$RUNNER_TEMP/TotemButtons-v$version.zip"
-          zip -X "$archive" TotemButtons/TotemButtons.toc TotemButtons/TotemButtons.lua TotemButtons/Icon.tga
+          python3 scripts/package.py "$archive"
           unzip -t "$archive"
           printf 'ADDON_VERSION=%s\nADDON_ARCHIVE=%s\nADDON_CHANGELOG=%s\n' "$version" "$archive" "$changelog" >> "$GITHUB_ENV"
           echo 'ready=true' >> "$GITHUB_OUTPUT"

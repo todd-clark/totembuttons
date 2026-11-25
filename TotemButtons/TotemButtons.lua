@@ -1,7 +1,9 @@
-local addonName = ...
+local addonName, addon = ...
 local className, class = UnitClass("player")
 local isShaman = class == "SHAMAN"
 local isPaladin = class == "PALADIN"
+local judgementSpell = 20271
+local paladinSeals = {20154, 21082, 1311649, 20375, 20164, 20165, 20166, 407798}
 
 -- WoW's totem timer slots are fire, earth, water, and air.
 local elements = isShaman and {
@@ -14,7 +16,8 @@ local elements = isShaman and {
     { key = "nova", label = "Fire Nova", spells = {408341}, kind = "nova" },
 } or isPaladin and {
     { key = "auras", label = "Auras", spells = {465, 7294, 19746, 19876, 19888, 19891, 20218}, kind = "aura" },
-    { key = "seals", label = "Seals", spells = {20154, 21082, 1311649, 20375, 20164, 20165, 20166, 407798}, kind = "seal" },
+    { key = "seals", label = "Seals", spells = paladinSeals, kind = "seal" },
+    { key = "judgement", label = "Judgement", spells = paladinSeals, kind = "judgement" },
     { key = "buffs", label = "Buffs", kind = "buff",
         spells = {19740, 19742, 20217, 19977, 1038, 25780, 1044, 1022, 25782, 25894, 25898, 25890, 25895} },
 } or {}
@@ -34,6 +37,12 @@ local imbueEnchantFamilies = {
 }
 local states, hosts, elementsByKey, buttonsByKey = {}, {}, {}, {}
 local recentTotemCasts, learnedTotemDurations = {}, {}
+local RefreshCrossbarIcons, WakeTracking
+local flyoutModifiers = { "SHIFT", "CTRL", "ALT" }
+
+local function KeyboardFlyoutModifier()
+    return TotemButtonsDB.keyboardFlyoutModifier or "SHIFT"
+end
 local recentImbueCast
 local mainHandSlot = INVSLOT_MAINHAND or 16
 local unlocked = false
@@ -115,16 +124,34 @@ local totemAuraSpells = {
 }
 local totemAuraIDsByName = {}
 
-local function MatchTimedAuraLayerOpacity(layerHost, state)
-    local alpha = 0
-    if state.host and state.button:IsVisible() then
-        local parentAlpha = UIParent:GetEffectiveAlpha()
-        if parentAlpha > 0 then
-            alpha = math.min(1, state.host:GetEffectiveAlpha() / parentAlpha)
-        end
+local auraOpacityFrame = CreateFrame("Frame", nil, UIParent)
+auraOpacityFrame:Hide()
+local shownAuraLayers, auraHostAlphas = {}, {}
+
+local function AuraLayerOpacity(state, parentAlpha)
+    if parentAlpha > 0 and state.host and state.button:IsVisible() then
+        return math.min(1, state.host:GetEffectiveAlpha() / parentAlpha)
     end
-    if layerHost:GetAlpha() ~= alpha then layerHost:SetAlpha(alpha) end
+    return 0
 end
+
+local function SetAuraLayerOpacity(host, alpha)
+    if host:GetAlpha() ~= alpha then host:SetAlpha(alpha) end
+end
+
+auraOpacityFrame:SetScript("OnUpdate", function()
+    wipe(auraHostAlphas)
+    local parentAlpha = UIParent:GetEffectiveAlpha()
+    for layer, state in pairs(shownAuraLayers) do
+        local host = state.host
+        local alpha = host and auraHostAlphas[host]
+        if alpha == nil then
+            alpha = AuraLayerOpacity(state, parentAlpha)
+            if host then auraHostAlphas[host] = alpha end
+        end
+        SetAuraLayerOpacity(layer, alpha)
+    end
+end)
 
 local function CreateTimedAuraLayer(state, baseSpell, buffIDs)
     -- Keep native aura frames off the secure action bar's parent and anchor chain.
@@ -133,7 +160,14 @@ local function CreateTimedAuraLayer(state, baseSpell, buffIDs)
     host:SetSize(shieldAuraSize, shieldAuraSize)
     host:EnableMouse(false)
     -- The separate host does not inherit fades from the slot or its bar.
-    host:SetScript("OnUpdate", function(self) MatchTimedAuraLayerOpacity(self, state) end)
+    host:SetScript("OnShow", function(self)
+        shownAuraLayers[self] = state
+        auraOpacityFrame:Show()
+    end)
+    host:SetScript("OnHide", function(self)
+        shownAuraLayers[self] = nil
+        if not next(shownAuraLayers) then auraOpacityFrame:Hide() end
+    end)
     local container = CreateFrame("AuraContainer", nil, host, "CustomAuraContainerTemplate")
     container:SetPoint("CENTER", host, "CENTER")
     container:SetSize(shieldAuraSize, shieldAuraSize)
@@ -284,7 +318,7 @@ local function UpdateTimedAuraArtwork(state)
             show = show and TotemButtonsDB.showRangeTint ~= false and ActiveEffect(state, name) ~= nil
         end
         if show and layer.width then
-            MatchTimedAuraLayerOpacity(layer.host, state)
+            SetAuraLayerOpacity(layer.host, AuraLayerOpacity(state, UIParent:GetEffectiveAlpha()))
             layer.host:Show()
         else
             layer.host:Hide()
@@ -390,6 +424,13 @@ local function PaintFireNovaTint(icon)
     end
 end
 
+local function PlayerAuraActive(name)
+    local lookup = C_UnitAuras and C_UnitAuras.GetAuraDataBySpellName
+    if not name or not lookup then return false end
+    local ok, aura = pcall(lookup, "player", name, "HELPFUL|PLAYER")
+    return ok and Readable(aura) and aura ~= nil
+end
+
 local function PaladinAuraActive(name)
     if not name then return false end
     -- The personal aura bar reports which aura this Paladin has selected.
@@ -404,10 +445,28 @@ local function PaladinAuraActive(name)
             end
         end
     end
-    local lookup = C_UnitAuras and C_UnitAuras.GetAuraDataBySpellName
-    if not lookup then return false end
-    local ok, aura = pcall(lookup, "player", name, "HELPFUL|PLAYER")
-    return ok and Readable(aura) and aura ~= nil
+    return PlayerAuraActive(name)
+end
+
+local function RefreshJudgementSeals()
+    if not isPaladin or InCombatLockdown() then return end
+    local active
+    for _, state in ipairs(states) do
+        if state.kind == "judgement" and (state.host or state.crossbarSlot) then
+            if active == nil then
+                active = false
+                for _, seal in ipairs(paladinSeals) do
+                    if PlayerAuraActive(C_Spell.GetSpellName(seal)) then
+                        active = true
+                        break
+                    end
+                end
+            end
+            if state.flyout:GetAttribute("hasActiveSeal") ~= active then
+                state.flyout:SetAttribute("hasActiveSeal", active)
+            end
+        end
+    end
 end
 
 local function PaintSelection(state)
@@ -417,17 +476,18 @@ local function PaintSelection(state)
     local texture = selected and C_Spell.GetSpellTexture(selected)
     local effect = ActiveEffect(state, name)
     state.icon:SetTexture(texture or 134400)
+    if state.crossbarSlot and RefreshCrossbarIcons then RefreshCrossbarIcons(state.crossbarSlot) end
     state.buttonTint = nil
     UpdateLowMana(state, selected)
     if state.kind == "aura" then
         state.icon:SetDesaturated(TotemButtonsDB.greyInactive ~= false and not PaladinAuraActive(name))
-    elseif state.kind ~= "nova" then
+    elseif state.kind ~= "nova" and state.kind ~= "judgement" then
         state.icon:SetDesaturated(not effect and TotemButtonsDB.greyInactive ~= false)
     end
     if state.slot and state.host then UpdateTimedAuraArtwork(state) end
     PaintButtonTint(state, effect)
     if state.kind == "nova" then PaintFireNovaTint(state.icon) end
-    if selected then TotemButtonsDB[state.key] = selected end
+    if selected and state.kind ~= "judgement" then TotemButtonsDB[state.key] = selected end
 
     local cooldown = state.cooldown
     local hideNumbers = TotemButtonsDB.showCountdown == false
@@ -437,11 +497,12 @@ local function PaintSelection(state)
     local start, duration, rate, timer
     if effect then
         start, duration, timer = effect.start, effect.duration, effect.timer
-    elseif selected and (state.slot or state.kind == "nova") then
+    elseif selected and (state.slot or state.kind == "nova" or state.kind == "judgement") then
         start, duration, rate, timer = ReadSpellCooldown(selected, cooldown)
     end
     local showingSpellCooldown = not effect and (start ~= nil or timer ~= nil)
     state.displayedEffect = effect
+    if WakeTracking then WakeTracking() end
     if start == state.paintedStart and duration == state.paintedDuration
         and rate == state.paintedRate and timer == state.paintedTimer
         and showingSpellCooldown == state.showingSpellCooldown then return end
@@ -504,7 +565,7 @@ local totemRangeYards = {
 
 local earthbindName
 local earthbindRangeSquared = 10 * 10
-local function ReadEarthsGraspRank()
+local function ReadTalentRank(spellID, alternateSpellID)
     if not C_Traits then return 0 end
     local configID
     local spec = C_SpecializationInfo
@@ -524,9 +585,9 @@ local function ReadEarthsGraspRank()
                 for _, entryID in ipairs(node.entryIDs or {}) do
                     local entry = C_Traits.GetEntryInfo(configID, entryID)
                     local definition = entry and entry.definitionID and C_Traits.GetDefinitionInfo(entry.definitionID)
-                    local spellID = definition and definition.spellID
-                    if spellID == 16043 or spellID == 16130 then -- Earth's Grasp
-                        return math.min(node.activeRank, 2)
+                    local talentSpell = definition and definition.spellID
+                    if talentSpell and (talentSpell == spellID or talentSpell == alternateSpellID) then
+                        return node.activeRank
                     end
                 end
             end
@@ -535,13 +596,15 @@ local function ReadEarthsGraspRank()
     return 0
 end
 
+local improvedStormstrikeRank = 0
 local function RefreshTotemTalents()
     earthbindName = C_Spell.GetSpellName(2484)
-    local rank = ReadEarthsGraspRank()
+    local rank = ReadTalentRank(16043, 16130)
     if rank then
-        local yards = totemRangeYards[2484] + rank
+        local yards = totemRangeYards[2484] + math.min(rank, 2)
         earthbindRangeSquared = yards * yards
     end
+    improvedStormstrikeRank = ReadTalentRank(1223031) or 0
 end
 
 local function TotemRangeSquared(name)
@@ -944,6 +1007,40 @@ local function RefreshTimedAuras()
     end
 end
 
+local trackingTimer
+local function NeedsTracking()
+    for _, state in ipairs(states) do
+        if state.host and state.button:IsVisible() then
+            local effect = state.slot and state.effect
+            if effect and ActiveEffect(state, effect.name) then return true end
+            if UsesTimedAura(state) then
+                if state.displayedEffect and not state.displayedEffect.expired then return true end
+                for _, layer in pairs(state.nativeAuraLayers or {}) do
+                    if layer.host:IsVisible() then
+                        for _, art in ipairs(layer.buttons) do
+                            local visible = art.button:IsVisible()
+                            if Readable(visible) and visible then return true end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return false
+end
+
+WakeTracking = function()
+    if trackingTimer or not NeedsTracking() then return end
+    trackingTimer = C_Timer.NewTicker(0.25, function()
+        if isShaman then UpdateTotemRanges() end
+        RefreshTimedAuras()
+        if not NeedsTracking() then
+            trackingTimer:Cancel()
+            trackingTimer = nil
+        end
+    end)
+end
+
 local function NotePlayerCast(spellID)
     if not Readable(spellID) or type(spellID) ~= "number" then return end
     if spellID == 437009 then -- Totemic Call
@@ -1030,6 +1127,116 @@ local function HostAction(host)
     return host:GetAttribute("action") or host.action
 end
 
+local flyoutColors = {
+    { 1, 0.33, 0.13 },   -- Fire
+    { 0.76, 0.54, 0.23 }, -- Earth
+    { 0.18, 0.68, 1 },   -- Water
+    { 0.55, 0.86, 1 },   -- Air
+}
+local holyHighlight = { 1, 0.78, 0.29 }
+local spellHighlightSlots = {
+    [8017] = 2, [8024] = 1, [8033] = 3, [8232] = 4,
+    [324] = 4, [408510] = 3,
+}
+-- Both masks share the same contour and alignment around the icon.
+local function CreateHighlightTexture(frame, index, layer)
+    local texture = frame:CreateTexture(nil, "OVERLAY", nil, layer)
+    texture:SetPoint("TOPLEFT", frame, "TOPLEFT", -6, 6)
+    texture:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", 6, -6)
+    texture:SetTexture([[Interface\AddOns\TotemButtons\HighlightBorder]])
+    local left = (index - 1) / 2
+    texture:SetTexCoord(left + 0.5 / 256, left + 127.5 / 256, 0.5 / 128, 127.5 / 128)
+    return texture
+end
+
+local function CreateButtonHighlight(button, lightning, color)
+    local wrapper = CreateFrame("Frame", nil, button)
+    wrapper:SetAllPoints(button)
+    wrapper:Hide()
+
+    local halo = CreateHighlightTexture(wrapper, 1, 3)
+    halo:SetBlendMode("ADD")
+    if lightning then
+        halo:SetVertexColor(0.17, 0.63, 1, 1)
+    else
+        halo:SetVertexColor(color[1], color[2], color[3], 1)
+    end
+
+    local border = CreateHighlightTexture(wrapper, 2, 6)
+    local r, g, b = unpack(lightning and { 0.53, 0.83, 1 } or color)
+    border:SetVertexColor(0.18 + 0.82 * r, 0.18 + 0.82 * g, 0.18 + 0.82 * b)
+
+    if lightning then
+        local arc = {}
+        for index = 1, 4 do
+            local line = wrapper:CreateLine(nil, "OVERLAY", nil, 7)
+            line:SetThickness(2)
+            line:SetColorTexture(0.86, 0.97, 1, 1)
+            arc[index] = line
+        end
+
+        local function EdgePoint(progress, offset, width, height)
+            local edge = progress % 4
+            if edge < 1 then return edge * width, height + offset end
+            if edge < 2 then return width + offset, (2 - edge) * height end
+            if edge < 3 then return (3 - edge) * width, -offset end
+            return -offset, (edge - 3) * height
+        end
+
+        function wrapper:ShowHaloOnly()
+            for _, line in ipairs(arc) do line:Hide() end
+            border:Hide()
+            self:SetAlpha(0.55)
+            self:SetScript("OnUpdate", nil)
+        end
+
+        local elapsed = 0
+        local function Animate(self, delta)
+            elapsed = elapsed + delta
+            if elapsed >= 0.65 then
+                self:ShowHaloOnly()
+                return
+            end
+
+            local width, height = self:GetSize()
+            local progress = elapsed / 0.65 * 4
+            local x, y = EdgePoint(progress, 1, width, height)
+            for index, line in ipairs(arc) do
+                local nextX, nextY = EdgePoint(progress + index * 0.10,
+                    index % 2 == 1 and 5 or 1, width, height)
+                line:SetStartPoint("BOTTOMLEFT", self, x, y)
+                line:SetEndPoint("BOTTOMLEFT", self, nextX, nextY)
+                x, y = nextX, nextY
+            end
+            self:SetAlpha(1 - elapsed / 0.65 * 0.45)
+        end
+        wrapper:SetScript("OnShow", function(self)
+            elapsed = 0
+            Animate(self, 0)
+            border:Show()
+            for _, line in ipairs(arc) do line:Show() end
+            self:SetScript("OnUpdate", Animate)
+        end)
+        wrapper:SetScript("OnHide", function(self) self:SetScript("OnUpdate", nil) end)
+    end
+
+    return wrapper
+end
+
+-- A visual-only alert on the actual Stormstrike action slot. Keep a
+-- separate glow so hiding this alert does not cancel another addon's proc art.
+local TestStormstrikeGlow, UpdateStormstrikeAlert
+if isShaman then
+    TestStormstrikeGlow, UpdateStormstrikeAlert = addon.CreateStormstrikeAlert({
+        barPrefixes = barPrefixes,
+        stockBars = stockBars,
+        HostAction = HostAction,
+        Readable = Readable,
+        CreateButtonHighlight = CreateButtonHighlight,
+        GetTalentRank = function() return improvedStormstrikeRank end,
+    })
+end
+
 local function HostKeys(host)
     local name = host:GetName()
     local prefix, index = name:match("^(%a[%w]-)(%d+)$")
@@ -1056,14 +1263,28 @@ local function SyncSlotKeys(state, force)
     local keys = HostKeys(state.host)
     local visible = state.button:IsVisible()
     local name = state.keyButton:GetName()
-    local expected = "CLICK " .. name .. ":LeftButton"
-    local signature = table.concat(keys, "\n")
+    local clicks = {}
+    local baseCount = #keys
+    for index = 1, baseCount do clicks[index] = "LeftButton" end
+    if state.kind ~= "nova" or state.magmaKeyAvailable then
+        local modifier = KeyboardFlyoutModifier()
+        local click = state.kind == "nova" and "RightButton" or "Flyout"
+        for index = 1, baseCount do
+            local modified = addon.WithFlyoutModifier(keys[index], modifier)
+            if modified and addon.CanBindFlyout(GetBindingAction(modified, false),
+                GetBindingAction(modified, true), "CLICK " .. name .. ":" .. click) then
+                keys[#keys + 1] = modified
+                clicks[#keys] = click
+            end
+        end
+    end
+    local signature = table.concat(keys, "\n") .. "\n" .. table.concat(clicks, "\n")
 
     if not force and signature == state.keySignature then
         if not visible then return end
         local missing
-        for _, key in ipairs(keys) do
-            if GetBindingAction(key, true) ~= expected then
+        for index, key in ipairs(keys) do
+            if GetBindingAction(key, true) ~= "CLICK " .. name .. ":" .. clicks[index] then
                 missing = true
                 break
             end
@@ -1078,8 +1299,10 @@ local function SyncSlotKeys(state, force)
     owner:SetAttribute("keyCount", #keys)
     ClearOverrideBindings(owner)
     for index, key in ipairs(keys) do
+        local click = clicks[index]
         owner:SetAttribute("key" .. index, key)
-        if visible then SetOverrideBindingClick(owner, true, key, name, "LeftButton") end
+        owner:SetAttribute("click" .. index, click)
+        if visible then SetOverrideBindingClick(owner, true, key, name, click) end
     end
 end
 
@@ -1217,6 +1440,211 @@ hooksecurefunc(GameTooltip, "SetAction", function(tooltip)
     end
 end)
 
+local resolveMouseoverUnit = [[
+    local spell = ...
+    local modifier = self:GetAttribute("mouseoverModifier")
+    local reaction = spell and self:GetAttribute("mouseover-" .. spell)
+    if modifier and reaction then
+        return SecureCmdOptionParse("[@mouseover," .. reaction .. ",nodead" .. modifier .. "] mouseover")
+    end
+]]
+
+local mouseoverCastUnit = [[
+    local unit
+    if button == "LeftButton" then
+        local spell = self:GetAttribute("spell1") or self:GetAttribute("spell")
+        unit = control:RunAttribute("resolveMouseoverUnit", spell)
+    end
+    self:SetAttribute("unit", unit)
+]]
+
+local function UpdateMouseoverModifier(state)
+    local modifier
+    if GetCVarBool("enableMouseoverCast") then
+        local binding = GetModifiedClick("MOUSEOVERCAST")
+        if binding == "NONE" then
+            modifier = ""
+        elseif binding == "ALT" or binding == "CTRL" or binding == "SHIFT" then
+            modifier = ",mod:" .. binding:lower()
+        end
+    end
+    state.bindOwner:SetAttribute("mouseoverModifier", modifier)
+end
+
+-- A single popup owns navigation at a time. Choice buttons also handle mouse
+-- selection, so confirming a highlighted choice runs the existing cast logic.
+local flyoutNavigation = CreateFrame("Frame", nil, UIParent, "SecureHandlerBaseTemplate")
+local function SetupFlyoutNavigation(state)
+    local flyout = state.flyout
+    local highlighted
+    function flyout:UpdateSelectionDisplay(index)
+        local choice = index and state.choices[index]
+        if choice == highlighted then return end
+        if highlighted and highlighted.selectionGlow then highlighted.selectionGlow:Hide() end
+        highlighted = choice
+        if highlighted and highlighted.selectionGlow then highlighted.selectionGlow:Show() end
+    end
+    local navigator = CreateFrame("Button", state.button:GetName() .. "Navigate", UIParent,
+        "SecureHandlerClickTemplate")
+    navigator:RegisterForClicks("AnyDown", "AnyUp")
+    SecureHandlerSetFrameRef(navigator, "flyout", flyout)
+    SecureHandlerSetFrameRef(flyout, "navigation", flyoutNavigation)
+    SecureHandlerSetFrameRef(flyout, "navigator", navigator)
+    SecureHandlerSetFrameRef(flyout, "screen", UIParent)
+    navigator:SetAttribute("_onclick", [[
+        local flyout = self:GetFrameRef("flyout")
+        if not flyout:IsVisible() then return end
+        local pad = button == "PadUp" or button == "PadDown" or button == "PadCancel"
+        if (pad and down) or (not pad and not down) then return end
+        if button == "Cancel" or button == "PadCancel" then
+            flyout:Hide()
+        else
+            flyout:RunAttribute("moveSelection", (button == "Up" or button == "PadUp") and 1 or -1)
+        end
+    ]])
+    flyout:SetAttribute("bindNavigation", [[
+        local navigator = self:GetFrameRef("navigator")
+        self:SetBindingClick(true, "MOUSEWHEELUP", navigator, "Up")
+        self:SetBindingClick(true, "MOUSEWHEELDOWN", navigator, "Down")
+        self:SetBindingClick(true, "ESCAPE", navigator, "Cancel")
+        local modifier = self:GetAttribute("keyboardModifier")
+        if modifier then
+            self:SetBindingClick(true, modifier .. "-MOUSEWHEELUP", navigator, "Up")
+            self:SetBindingClick(true, modifier .. "-MOUSEWHEELDOWN", navigator, "Down")
+            self:SetBindingClick(true, modifier .. "-ESCAPE", navigator, "Cancel")
+        end
+        if self:GetAttribute("inputMode") == "gamepad" and not self:GetAttribute("gamepadPressHeld") then
+            self:SetBindingClick(true, "PADDUP", navigator, "PadUp")
+            self:SetBindingClick(true, "PADDDOWN", navigator, "PadDown")
+            self:SetBindingClick(true, "PAD2", navigator, "PadCancel")
+        end
+    ]])
+    flyout:SetAttribute("setChoice", [[
+        local index, moved = ...
+        local choice = index and self:GetFrameRef("choice" .. index)
+        if not choice or not choice:GetAttribute("totemSpell") then return end
+        self:SetAttribute("choiceIndex", index)
+        if moved then self:SetAttribute("selectionMoved", true) end
+        self:CallMethod("UpdateSelectionDisplay", index)
+        if self:GetAttribute("inputMode") == "gamepad" and not self:GetAttribute("gamepadPressHeld") then
+            self:SetBindingClick(true, "PAD1", choice, "LeftButton")
+        end
+    ]])
+    flyout:SetAttribute("confirmChoice", [[
+        local index = ...
+        local choice = index and self:GetFrameRef("choice" .. index)
+        if choice then self:RunAttribute("selectSpell", choice:GetAttribute("totemSpell")) end
+        self:Hide()
+    ]])
+    flyout:SetAttribute("moveSelection", [[
+        local direction = ...
+        local count = self:GetAttribute("choiceCount")
+        if not count or count == 0 then return end
+        local index = self:GetAttribute("choiceIndex")
+        if direction == 0 then
+            local spell = self:GetAttribute("selectedSeal") or self:GetFrameRef("button"):GetAttribute("spell1")
+            for candidate = 1, count do
+                local choice = self:GetFrameRef("choice" .. candidate)
+                local candidateSpell = choice and choice:GetAttribute("totemSpell")
+                if candidateSpell then
+                    index = index or candidate
+                    if candidateSpell == spell then index = candidate; break end
+                end
+            end
+        elseif index then
+            for step = 1, count do
+                index = (index - 1 + direction) % count + 1
+                if self:GetFrameRef("choice" .. index):GetAttribute("totemSpell") then break end
+            end
+        end
+        self:RunAttribute("setChoice", index, direction ~= 0 and index ~= self:GetAttribute("choiceIndex"))
+    ]])
+    flyout:SetAttribute("revealChoices", [[
+        local anchor = ... or self:GetFrameRef("button")
+        local screen = self:GetFrameRef("screen")
+        local gamepad = self:GetAttribute("inputMode") == "gamepad"
+        local x = gamepad and self:GetAttribute("gamepadAnchorX")
+        local y = gamepad and self:GetAttribute("gamepadAnchorY")
+        self:ClearAllPoints()
+        if x and y then
+            self:SetPoint("BOTTOM", screen, "BOTTOMLEFT", x, y)
+        elseif anchor:IsVisible() then
+            self:SetPoint("BOTTOM", anchor, "TOP", 0, 0)
+        else
+            self:SetPoint("CENTER", self:GetFrameRef("screen"), "CENTER", 0, -100)
+        end
+        self:Show()
+    ]])
+    flyout:SetAttribute("openInputFlyout", [[
+        local mode, anchor, pressHeld = ...
+        if not self:GetAttribute("hasChoices") then return end
+        local navigation = self:GetFrameRef("navigation")
+        local active = navigation:GetAttribute("activeFlyout")
+        if active == self and self:GetAttribute("inputMode") == mode then
+            if mode ~= "hover" then self:Hide() end
+            return
+        end
+        if active then active:Hide() end
+        self:UnregisterAutoHide()
+        self:SetAttribute("inputMode", mode)
+        self:SetAttribute("gamepadPressHeld", pressHeld)
+        -- Ensure a quick press and release is seen even between driver ticks.
+        if mode == "keyboard" then self:SetAttribute("state-flyoutmodifier", "held") end
+        navigation:SetAttribute("activeFlyout", self)
+        self:RunAttribute("revealChoices", anchor)
+        self:RunAttribute("moveSelection", 0)
+        self:RunAttribute("bindNavigation")
+    ]])
+    flyout:SetAttribute("_onstate-flyoutmodifier", [[
+        local mode = self:GetAttribute("inputMode")
+        if newstate == "released" and mode then
+            local index = self:GetAttribute("selectionMoved") and self:GetAttribute("choiceIndex")
+            self:RunAttribute("confirmChoice", index)
+        elseif newstate == "held" and not mode and self:GetAttribute("anchorHovered") then
+            local anchor = self:GetFrameRef("button")
+            if anchor:IsVisible() and anchor:IsUnderMouse() then self:RunAttribute("showChoices") end
+        end
+    ]])
+    flyout:SetAttribute("selectSpell", [[
+        local spell = ...
+        if not spell then return end
+        if self:GetAttribute("isJudgementPicker") then
+            self:SetAttribute("selectedSeal", spell)
+        else
+            self:GetFrameRef("keyButton"):SetAttribute("spell", spell)
+            self:GetFrameRef("button"):SetAttribute("spell1", spell)
+        end
+    ]])
+    SecureHandlerWrapScript(flyout, "OnHide", flyout, [[
+        self:CallMethod("UpdateSelectionDisplay", 0)
+        self:SetAttribute("choiceIndex", nil)
+        self:ClearBindings()
+        self:SetAttribute("selectionMoved", nil)
+        self:SetAttribute("inputMode", nil)
+        self:SetAttribute("gamepadPressHeld", nil)
+        local navigation = self:GetFrameRef("navigation")
+        if navigation:GetAttribute("activeFlyout") == self then navigation:SetAttribute("activeFlyout", nil) end
+    ]])
+end
+
+local sentryStatus
+if isShaman then
+    sentryStatus = CreateFrame("Frame", nil, UIParent, "SecureHandlerBaseTemplate")
+    RegisterStateDriver(sentryStatus, "sentrycombat", "[combat] combat; peace")
+end
+
+local function RefreshSentryStatus()
+    if not sentryStatus or InCombatLockdown() then return end
+    local have, name, _, _, _, _, spellID = GetTotemInfo(4)
+    local sentryName = C_Spell.GetSpellName(6495)
+    local active = Readable(have) and have == true and (
+        (Readable(spellID) and spellID == 6495)
+        or (sentryName ~= nil and Readable(name) and name == sentryName))
+    if sentryStatus:GetAttribute("sentryActive") ~= active then
+        sentryStatus:SetAttribute("sentryActive", active)
+    end
+end
+
 local function Build(state)
     local button = CreateFrame("Button", "TotemButton_" .. state.key:gsub("-", "_"), UIParent,
         "SecureActionButtonTemplate")
@@ -1238,9 +1666,9 @@ local function Build(state)
 
     -- Key presses go to their own secure button, independent of mouse drag/release.
     local keyButton = CreateFrame("Button", button:GetName() .. "Key", UIParent, "SecureActionButtonTemplate")
-    -- WoW chooses the casting edge. Listen on both edges for CLICK bindings
-    -- and let the secure template handle ordinary spells using the client setting.
+    -- Keyboard bindings cast immediately. The crossbar handles its own release.
     keyButton:RegisterForClicks("AnyDown", "AnyUp")
+    keyButton:SetAttribute("useOnKeyDown", true)
     keyButton:SetAttribute("type", "spell")
     keyButton:HookScript("PostClick", function(_, _, down)
         state.keyClicks = (state.keyClicks or 0) + 1
@@ -1252,7 +1680,46 @@ local function Build(state)
     -- page swaps and visibility changes, including in combat.
     local owner = CreateFrame("Frame", nil, UIParent, "SecureHandlerBaseTemplate")
     state.bindOwner = owner
+    owner:SetAttribute("resolveMouseoverUnit", resolveMouseoverUnit)
+    UpdateMouseoverModifier(state)
+    -- Set the unit at click time so the same spell action can still use its
+    -- normal targeting when there is no eligible mouseover.
+    local castUnit = mouseoverCastUnit
+    if state.slot == 4 then
+        local sentryName = C_Spell.GetSpellName(6495)
+        for _, castButton in ipairs({ button, keyButton }) do
+            castButton:SetAttribute("*spell-sentryview", sentryName)
+            castButton:SetAttribute("*type-sentryview", "cancelaura")
+        end
+        SecureHandlerSetFrameRef(owner, "sentryStatus", sentryStatus)
+        castUnit = [[
+            local sentry = control:GetFrameRef("sentryStatus")
+            local spell = self:GetAttribute("spell1") or self:GetAttribute("spell")
+            if button == "LeftButton" and spell == 6495
+                and sentry:GetAttribute("state-sentrycombat") == "peace"
+                and sentry:GetAttribute("sentryActive") then
+                self:SetAttribute("unit", nil)
+                return "sentryview", true
+            end
+        ]] .. castUnit
+    end
+    SecureHandlerWrapScript(button, "OnClick", owner, castUnit)
+    SecureHandlerWrapScript(keyButton, "OnClick", owner, [[
+        if not down then
+            -- Releasing the modifier first can route the key-up as a plain cast.
+            self:SetAttribute("flyoutKeyHeld", nil)
+            return false
+        end
+        if button == "Flyout" then
+            if not self:GetAttribute("flyoutKeyHeld") then
+                self:SetAttribute("flyoutKeyHeld", true)
+                control:GetFrameRef("flyout"):RunAttribute("openInputFlyout", "keyboard")
+            end
+            return false
+        end
+    ]] .. castUnit)
     owner:SetAttribute("buttonName", keyButton:GetName())
+    SecureHandlerSetFrameRef(owner, "keyButton", keyButton)
     local function CurrentAction()
         if InCombatLockdown() or not state.host then return end
         local action = HostAction(state.host)
@@ -1272,11 +1739,13 @@ local function Build(state)
     SecureHandlerWrapScript(button, "OnShow", owner, [[
         local name = control:GetAttribute("buttonName")
         for index = 1, control:GetAttribute("keyCount") or 0 do
-            control:SetBindingClick(true, control:GetAttribute("key" .. index), name, "LeftButton")
+            control:SetBindingClick(true, control:GetAttribute("key" .. index), name,
+                control:GetAttribute("click" .. index) or "LeftButton")
         end
     ]])
     SecureHandlerWrapScript(button, "OnHide", owner, [[
         control:ClearBindings()
+        control:GetFrameRef("keyButton"):SetAttribute("flyoutKeyHeld", nil)
         local flyout = control:GetFrameRef("flyout")
         if flyout then flyout:Hide() end
     ]])
@@ -1284,6 +1753,7 @@ local function Build(state)
     state.icon:Hide()
     button:HookScript("OnShow", function()
         state.icon:Show()
+        if WakeTracking then WakeTracking() end
         SuppressMacroIcon(state)
         HideMacroLabel(state)
     end)
@@ -1351,14 +1821,16 @@ local function Build(state)
         end
     end)
 
-    local flyout = CreateFrame("Frame", nil, button, "SecureHandlerStateTemplate")
+    local flyout = CreateFrame("Frame", nil, UIParent, "SecureHandlerStateTemplate,SecureHandlerBaseTemplate")
     flyout:SetPoint("BOTTOM", button, "TOP")
     flyout:SetSize(1, 1)
     -- Retain the flyout layer when the anchor is attached to an action bar.
     flyout:SetFrameStrata("TOOLTIP")
     flyout:SetFixedFrameStrata(true)
+    flyout:SetClampedToScreen(true)
     flyout:Hide()
     state.flyout, state.choices = flyout, {}
+    SetupFlyoutNavigation(state)
     local function NotifyBarFlyout(shown)
         local host = state.host
         if host and host._eabExternalFlyoutChanged then
@@ -1369,11 +1841,35 @@ local function Build(state)
     flyout:HookScript("OnHide", function() NotifyBarFlyout(false) end)
     SecureHandlerSetFrameRef(flyout, "button", button)
     SecureHandlerSetFrameRef(flyout, "keyButton", keyButton)
+    SecureHandlerSetFrameRef(flyout, "castOwner", owner)
+    if state.kind == "judgement" then
+        flyout:SetAttribute("isJudgementPicker", true)
+        flyout:SetAttribute("updateJudgement", [[
+            local spell = self:GetAttribute("judgementSpell")
+            if self:GetAttribute("state-judgementcombat") == "peace" and not self:GetAttribute("hasActiveSeal") then
+                spell = self:GetAttribute("selectedSeal") or spell
+            end
+            self:GetFrameRef("keyButton"):SetAttribute("spell", spell)
+            self:GetFrameRef("button"):SetAttribute("spell1", spell)
+        ]])
+        flyout:SetAttribute("_onstate-judgementcombat", [[ self:RunAttribute("updateJudgement") ]])
+        SecureHandlerWrapScript(flyout, "OnAttributeChanged", flyout, [[
+            if name == "selectedSeal" or name == "hasActiveSeal" or name == "judgementSpell" then
+                self:RunAttribute("updateJudgement")
+            end
+        ]])
+        flyout:HookScript("OnAttributeChanged", function(_, name, spell)
+            if name == "selectedSeal" and spell then TotemButtonsDB[state.key] = spell end
+        end)
+        owner:SetAttribute("mouseover-" .. judgementSpell, "harm")
+        RegisterStateDriver(flyout, "judgementcombat", "[combat] fighting; peace")
+    end
     flyout:SetAttribute("showChoices", [[
-        if not self:GetAttribute("hasChoices") then return end
-        if self:GetAttribute("requireShift") and self:GetAttribute("state-flyoutshift") ~= "held" then return end
+        local mode = self:GetAttribute("inputMode")
+        if (mode and mode ~= "hover") or not self:GetAttribute("hasChoices") then return end
+        if self:GetAttribute("requireHoverModifier") and self:GetAttribute("state-flyoutmodifier") ~= "held" then return end
         local anchor = self:GetFrameRef("button")
-        self:Show()
+        self:RunAttribute("openInputFlyout", "hover", anchor)
         self:RegisterAutoHide(0.15)
         self:AddToAutoHide(anchor)
         for _, choice in ipairs(newtable(self:GetChildren())) do
@@ -1381,7 +1877,7 @@ local function Build(state)
         end
     ]])
     flyout:SetAttribute("hideChoicesOnLeave", [[
-        if not self:IsVisible() then return end
+        if self:GetAttribute("inputMode") ~= "hover" or not self:IsVisible() then return end
         local anchor = self:GetFrameRef("button")
         if not anchor:IsUnderMouse() and not self:IsUnderMouse() then
             self:Hide()
@@ -1395,24 +1891,17 @@ local function Build(state)
         control:SetAttribute("anchorHovered", nil)
         control:RunAttribute("hideChoicesOnLeave")
     ]])
-    flyout:SetAttribute("_onstate-flyoutshift", [[
-        if not self:GetAttribute("requireShift") then return end
-        if newstate ~= "held" then
-            self:Hide()
-        elseif self:GetAttribute("anchorHovered") then
-            local anchor = self:GetFrameRef("button")
-            if anchor:IsVisible() and anchor:IsUnderMouse() then self:RunAttribute("showChoices") end
-        end
-    ]])
     SecureHandlerSetFrameRef(owner, "flyout", flyout)
+    flyout:SetAttribute("choiceCount", #state.spells)
     for index = 1, #state.spells do
-        local choice = CreateFrame("Button", nil, flyout, "SecureActionButtonTemplate")
+        local choice = CreateFrame("Button", button:GetName() .. "Choice" .. index, flyout, "SecureActionButtonTemplate")
+        SecureHandlerSetFrameRef(flyout, "choice" .. index, choice)
         choice:SetFrameStrata(flyout:GetFrameStrata())
         choice:SetFixedFrameStrata(true)
         choice:SetPoint("BOTTOMLEFT", flyout, "BOTTOMLEFT")
         choice:RegisterForClicks("LeftButtonUp")
-        if flyoutCastOptions[state.kind] then choice:SetAttribute("useOnKeyDown", false) end
-        choice.icon = PaintButton(choice)
+        choice:SetAttribute("useOnKeyDown", false)
+        choice.icon = PaintButton(choice, nil, true)
         local rim = choice:CreateTexture(nil, "BACKGROUND")
         rim:SetColorTexture(0.45, 0.45, 0.45, 1)
         rim:SetAllPoints(choice)
@@ -1427,16 +1916,16 @@ local function Build(state)
             GameTooltip:Show()
         end)
         choice:SetScript("OnLeave", function() GameTooltip:Hide() end)
+        choice:SetAttribute("choiceIndex", index)
+        SecureHandlerWrapScript(choice, "OnEnter", flyout, [[
+            if control:IsVisible() then control:RunAttribute("setChoice", self:GetAttribute("choiceIndex"), true) end
+        ]])
         SecureHandlerWrapScript(choice, "OnLeave", flyout, [[
             control:RunAttribute("hideChoicesOnLeave")
         ]])
         SecureHandlerWrapScript(choice, "OnClick", flyout, [[
-            local spell = self:GetAttribute("totemSpell")
-            if button == "LeftButton" and not down and spell then
-                control:GetFrameRef("keyButton"):SetAttribute("spell", spell)
-                local button = control:GetFrameRef("button")
-                button:SetAttribute("spell1", spell)
-                control:Hide()
+            if button == "LeftButton" and not down then
+                control:RunAttribute("confirmChoice", self:GetAttribute("choiceIndex"))
             end
         ]])
         choice:Hide()
@@ -1449,22 +1938,35 @@ local function ApplyFlyoutCastOption(state)
     if not option then return end
     local actionType = TotemButtonsDB[option] ~= false and "spell" or nil
     for _, choice in ipairs(state.choices) do
-        -- The flyout can require Shift to stay open during the left-click.
+        -- The flyout can require a modifier to stay open during the left-click.
         choice:SetAttribute("*type1", actionType)
     end
 end
 
 local function ApplyFlyoutModifier(state)
-    if state.kind == "nova" then return end
-    local required = TotemButtonsDB.shiftFlyouts == true
+    if state.kind == "nova" then
+        local prefix = KeyboardFlyoutModifier():lower() .. "-"
+        local previous = state.magmaModifierPrefix
+        if previous and previous ~= prefix then
+            state.button:SetAttribute(previous .. "spell1", nil)
+            state.button:SetAttribute(previous .. "type1", nil)
+        end
+        local magma = state.keyButton:GetAttribute("spell2")
+        state.button:SetAttribute(prefix .. "spell1", magma)
+        state.button:SetAttribute(prefix .. "type1", magma and "spell" or "")
+        state.magmaModifierPrefix = prefix
+        return
+    end
     local flyout = state.flyout
-    if (flyout:GetAttribute("requireShift") == true) == required then return end
-    flyout:SetAttribute("requireShift", required)
-    if required then
-        flyout:Hide()
-        RegisterStateDriver(flyout, "flyoutshift", "[mod:shift] held; released")
-    else
-        UnregisterStateDriver(flyout, "flyoutshift")
+    local modifier = KeyboardFlyoutModifier()
+    local required = TotemButtonsDB.requireHoverModifier == true
+    local changed = flyout:GetAttribute("keyboardModifier") ~= modifier
+    if not changed and flyout:GetAttribute("requireHoverModifier") == required then return end
+    if required or flyout:GetAttribute("inputMode") == "keyboard" then flyout:Hide() end
+    flyout:SetAttribute("requireHoverModifier", required)
+    if changed then
+        flyout:SetAttribute("keyboardModifier", modifier)
+        RegisterStateDriver(flyout, "flyoutmodifier", "[mod:" .. modifier:lower() .. "] held; released")
     end
 end
 
@@ -1472,6 +1974,7 @@ local function RefreshChoices(state, known, knownIDs)
     local selected = TotemButtonsDB[state.key]
     local selectedName = selected and C_Spell.GetSpellName(selected)
     local first, retained
+    UpdateMouseoverModifier(state)
     local size = state.button:GetWidth()
     if size <= 0 then size = 36 end
     size = size * 0.75
@@ -1480,7 +1983,8 @@ local function RefreshChoices(state, known, knownIDs)
         local choice = state.choices[index]
         local name = C_Spell.GetSpellName(baseID)
         local spell = name and known[name]
-        local ranks = (state.kind == "seal" or state.kind == "buff") and timedAuraRanks[baseID]
+        local ranks = (state.kind == "seal" or state.kind == "buff" or state.kind == "judgement")
+            and timedAuraRanks[baseID]
         if ranks and spell then
             for rank = #ranks, 1, -1 do
                 if knownIDs[ranks[rank]] then
@@ -1491,9 +1995,23 @@ local function RefreshChoices(state, known, knownIDs)
         end
         if flyoutCastOptions[state.kind] then choice:SetAttribute("*spell1", spell or nil) end
         if spell then
+            local info = C_Spell.GetSpellInfo(spell)
+            local reaction
+            if info and info.maxRange and info.maxRange > 0 then
+                if C_Spell.IsSpellHelpful(spell) then
+                    reaction = "help"
+                elseif C_Spell.IsSpellHarmful(spell) then
+                    reaction = "harm"
+                end
+            end
+            state.bindOwner:SetAttribute("mouseover-" .. spell, reaction)
             count = count + 1
             first = first or spell
             if selectedName == name then retained = spell end
+            if not choice.selectionGlow then
+                local element = state.slot or spellHighlightSlots[baseID]
+                choice.selectionGlow = CreateButtonHighlight(choice, false, flyoutColors[element] or holyHighlight)
+            end
             choice.spellID = spell
             choice:SetAttribute("totemSpell", spell)
             choice.icon:SetTexture(C_Spell.GetSpellTexture(spell))
@@ -1510,10 +2028,24 @@ local function RefreshChoices(state, known, knownIDs)
     ApplyFlyoutCastOption(state)
     state.flyout:SetSize(size, math.max(1, count) * size)
     state.flyout:SetAttribute("hasChoices", count > 0 and state.kind ~= "nova")
-    ApplyFlyoutModifier(state)
+    if state.kind ~= "nova" then ApplyFlyoutModifier(state) end
     local spell = retained or first
-    state.keyButton:SetAttribute("spell", spell)
-    state.button:SetAttribute("spell1", spell)
+    if state.kind == "judgement" then
+        state.flyout:SetAttribute("judgementSpell", knownIDs[judgementSpell] and judgementSpell or nil)
+        state.flyout:SetAttribute("selectedSeal", spell)
+    else
+        state.keyButton:SetAttribute("spell", spell)
+        state.button:SetAttribute("spell1", spell)
+    end
+    if state.kind == "nova" then
+        local magmaName = C_Spell.GetSpellName(8190)
+        local magma = magmaName and known[magmaName]
+        state.keyButton:SetAttribute("type2", magma and "spell" or "")
+        state.keyButton:SetAttribute("spell2", magma)
+        state.magmaKeyAvailable = magma ~= nil
+        ApplyFlyoutModifier(state)
+        if state.host then SyncSlotKeys(state, false) end
+    end
 end
 
 local function KnownSpells()
@@ -1764,7 +2296,18 @@ local function Detach(state)
     state.host, state.action = nil, nil
 end
 
-local function Refresh()
+local Refresh, RefreshCrossbarSlots
+RefreshCrossbarSlots, RefreshCrossbarIcons = addon.CreateCrossbar({
+    Readable = Readable,
+    flyoutNavigation = flyoutNavigation,
+    MacroButton = MacroButton,
+    buttonsByKey = buttonsByKey,
+    RegisterCopy = RegisterCopy,
+    CanUseSlots = function() return not unlocked and not BindingModeActive() end,
+    Refresh = function() Refresh() end,
+})
+
+Refresh = function()
     if InCombatLockdown() or EditModeActive() then return end
     ScanButtonMacros()
     for _, state in ipairs(states) do state.onBar = false end
@@ -1774,19 +2317,24 @@ local function Refresh()
         for _, state in ipairs(states) do
             if state.host then Detach(state) end
         end
+        RefreshCrossbarSlots()
         return
     end
 
-    local candidates = {}
+    local candidates, cachedActions = {}, {}
     for _, prefix in ipairs(barPrefixes) do
         local count = stockBars[prefix] and 12 or (prefix == "BT4Button" and 180 or 240)
         for index = 1, count do
             local host = _G[prefix .. index]
             local action = host and HostAction(host)
             if Readable(action) and action and action > 0 then
-                local kind, id = GetActionInfo(action)
-                local state = Readable(kind) and kind == "macro" and Readable(id) and id
-                    and MacroButton(GetMacroBody(id))
+                local state = cachedActions[action]
+                if state == nil then
+                    local kind, id = GetActionInfo(action)
+                    state = Readable(kind) and kind == "macro" and Readable(id) and id
+                        and MacroButton(GetMacroBody(id))
+                    cachedActions[action] = state or false
+                end
                 if state then
                     local slots = candidates[state]
                     if not slots then
@@ -1853,11 +2401,13 @@ local function Refresh()
         end
     end
 
+    RefreshCrossbarSlots()
     local known, knownIDs = KnownSpells()
     for _, state in ipairs(states) do
         RefreshChoices(state, known, knownIDs)
         UpdateTimer(state)
     end
+    RefreshJudgementSeals()
 end
 
 local function PickUpButton(state, newCopy)
@@ -1933,208 +2483,32 @@ end
 
 local settingsCategory
 local function BuildSettings()
-    local canvas = CreateFrame("Frame")
-    local logo = canvas:CreateTexture(nil, "ARTWORK")
-    logo:SetSize(28, 28)
-    logo:SetPoint("TOPLEFT", 16, -12)
-    logo:SetTexture(C_AddOns.GetAddOnMetadata(addonName, "IconTexture"))
-    local title = canvas:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
-    title:SetPoint("LEFT", logo, "RIGHT", 8, 0)
-    title:SetText("Totem Buttons")
-
-    local classLabel = canvas:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
-    classLabel:SetPoint("TOPRIGHT", -16, -18)
-    classLabel:SetText(className)
-    local classColor = RAID_CLASS_COLORS and RAID_CLASS_COLORS[class]
-    if classColor then classLabel:SetTextColor(classColor.r, classColor.g, classColor.b) end
-
-    local version = canvas:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-    version:SetPoint("BOTTOMRIGHT", -16, 12)
-    version:SetText("v" .. C_AddOns.GetAddOnMetadata(addonName, "Version"))
-
-    settingsCategory = Settings.RegisterCanvasLayoutCategory(canvas, "Totem Buttons")
-    Settings.RegisterAddOnCategory(settingsCategory)
-    if #elements == 0 then
-        local message = canvas:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
-        message:SetPoint("TOPLEFT", logo, "BOTTOMLEFT", 0, -10)
-        message:SetText(className and "No features are available for " .. className .. " characters yet."
-            or "No features are available for this class yet.")
-        return
-    end
-
-    local panel = canvas
-
-    local function AddHeading(text, anchor, x, y)
-        local heading = panel:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
-        heading:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", x, y)
-        heading:SetText(text)
-        return heading
-    end
-
-    local settingsChecks = {}
-    local function AddCheck(key, text, anchor, y, onChanged, indent)
-        local check = CreateFrame("CheckButton", nil, panel, "UICheckButtonTemplate")
-        check:SetSize(24, 24)
-        check:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", indent or 0, y)
-        local label = check:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
-        label:SetPoint("LEFT", check, "RIGHT", 4, 0)
-        label:SetText(text)
-        check:SetScript("OnClick", function(self)
-            TotemButtonsDB[key] = not not self:GetChecked()
-            onChanged()
-        end)
-        settingsChecks[key] = check
-        return check, label
-    end
-
-    local function RefreshAppearance()
-        for _, state in ipairs(states) do
-            if UsesTimedAura(state) then
-                UpdateTimedAura(state)
-            else
-                PaintSelection(state)
-            end
-        end
-    end
-
-    local instructions = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
-    local function UpdateInstructions()
-        local hoverText = TotemButtonsDB.shiftFlyouts
-            and "Hold Shift and hover over the button to choose a spell."
-            or "Hover over the button to choose a spell."
-        instructions:SetText(
-            "Drag an icon onto your action bar.\n"
-            .. (isShaman and "Click or use the slot keybind to cast. Right-click a totem to dismiss it.\n" or "")
-            .. "Pick the same icon again to add a separate button.\n"
-            .. hoverText
-        )
-    end
-    local shiftCheck = AddCheck("shiftFlyouts", "Hold Shift to show flyouts", instructions, -5, function()
-        UpdateInstructions()
-        if InCombatLockdown() or EditModeActive() then return end
-        for _, state in ipairs(states) do ApplyFlyoutModifier(state) end
-    end)
-    instructions:SetPoint("TOPLEFT", logo, "BOTTOMLEFT", 0, -8)
-    instructions:SetJustifyH("LEFT")
-    instructions:SetSpacing(2)
-
-    local displayHeading = AddHeading("Global Options", shiftCheck, 0, -8)
-    local grayCheck
-    if isShaman then
-        local stockBarCheck = AddCheck("hideStockBar", "Hide the default Totem Bar",
-            displayHeading, -4, ApplyStockBarVisibility)
-        grayCheck = AddCheck("greyInactive", "Gray out inactive totems, imbues, and shields",
-            stockBarCheck, 0, RefreshAppearance)
-    else
-        grayCheck = AddCheck("greyInactive", "Gray out inactive auras, seals, and buffs",
-            displayHeading, -4, RefreshAppearance)
-    end
-    local countdownCheck = AddCheck("showCountdown", "Show countdown numbers", grayCheck, 0, RefreshAppearance)
-    local sizeLabel = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
-    sizeLabel:SetPoint("TOPLEFT", countdownCheck, "BOTTOMLEFT", 24, -5)
-    sizeLabel:SetText("Size:")
-    local countdownSize = CreateFrame("Slider", "TotemButtonsCountdownSizeSlider", panel, "OptionsSliderTemplate")
-    countdownSize:SetPoint("LEFT", sizeLabel, "RIGHT", 10, 0)
-    countdownSize:SetSize(130, 18)
-    countdownSize:SetMinMaxValues(minCountdownPercent, maxCountdownPercent)
-    countdownSize:SetValueStep(1)
-    countdownSize:SetObeyStepOnDrag(true)
-    countdownSize:SetValue(TotemButtonsDB.countdownPercent)
-    countdownSize:SetScript("OnValueChanged", function(_, value)
-        value = math.floor(value + 0.5)
-        TotemButtonsDB.countdownPercent = value
-        for _, state in ipairs(states) do
-            if state.host then UpdateCountdownFont(state, state.host:GetSize()) end
-        end
-        RefreshTimedAuras()
-    end)
-
-    local function AddButton(state, heading, column)
-        local button = CreateFrame("Button", nil, panel)
-        button:SetSize(36, 36)
-        button:SetPoint("TOPLEFT", heading, "BOTTOMLEFT", 8 + (column - 1) * 76, -7)
-        PaintButton(button, C_Spell.GetSpellTexture(state.spells[1]))
-        button:RegisterForDrag("LeftButton")
-        button:SetScript("OnDragStart", function()
-            if GetCursorInfo() then return end
-            PickUpButton(state, IsShiftKeyDown())
-            WatchDragRelease()
-        end)
-        button:SetScript("OnClick", function() PickUpButton(state, IsShiftKeyDown()) end)
-
-        if state.kind == "nova" then
-            local note = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
-            note:SetPoint("LEFT", button, "RIGHT", 12, 0)
-            note:SetPoint("RIGHT", panel, "RIGHT", -8, 0)
-            note:SetJustifyH("LEFT")
-            note:SetText("Grays out when no active fire totem is detected.")
-        elseif isShaman then
-            local label = button:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-            label:SetPoint("TOP", button, "BOTTOM", 0, -5)
-            label:SetText(state.label)
-        end
-    end
-
-    local UpdateRangeOptions
-    if isShaman then
-        local totemsHeading = AddHeading("Totems", countdownCheck, 0, -42)
-        local rangeCheck = AddCheck("showRangeTint", "Tint active totems red when you are missing their buff",
-            totemsHeading, -59, RefreshAppearance)
-        local nonBuffCheck, nonBuffLabel = AddCheck("includeNonBuffTotems",
-            "Include non-buff totems |cffff4040(does not work in instances)|r",
-            rangeCheck, 0, RefreshAppearance, 24)
-        UpdateRangeOptions = function()
-            local enabled = TotemButtonsDB.showRangeTint ~= false
-            nonBuffCheck:SetEnabled(enabled)
-            nonBuffLabel:SetAlpha(enabled and 1 or 0.5)
-        end
-        rangeCheck:HookScript("OnClick", UpdateRangeOptions)
-        local utilityHeading = AddHeading("Imbues and shields", nonBuffCheck, -24, -9)
-        local novaHeading = AddHeading("Fire Nova", utilityHeading, 0, -65)
-
-        local totemColumn, utilityColumn = 1, 1
-        for _, state in ipairs(elements) do
-            if state.slot then
-                AddButton(state, totemsHeading, totemColumn)
-                totemColumn = totemColumn + 1
-            elseif state.kind == "nova" then
-                AddButton(state, novaHeading, 1)
-            else
-                AddButton(state, utilityHeading, utilityColumn)
-                utilityColumn = utilityColumn + 1
-            end
-        end
-    else
-        local heading = countdownCheck
-        for index, state in ipairs(elements) do
-            local kind = state.kind
-            heading = AddHeading(state.label, heading, 0, index == 1 and -42 or -84)
-            AddButton(state, heading, 1)
-            local option = flyoutCastOptions[kind]
-            if option then
-                local label = kind == "aura" and "Cast aura on selection" or "Cast seal on selection"
-                AddCheck(option, label, heading, -18, function()
-                    if InCombatLockdown() or EditModeActive() then return end
-                    for _, buttonState in ipairs(states) do
-                        if buttonState.kind == kind then ApplyFlyoutCastOption(buttonState) end
-                    end
-                end, 76)
-            end
-        end
-    end
-
-    local function FitContent(self)
-        instructions:SetWidth(math.max(1, self:GetWidth() - 32))
-    end
-    canvas:HookScript("OnSizeChanged", FitContent)
-    canvas:SetScript("OnShow", function(self)
-        FitContent(self)
-        UpdateInstructions()
-        for key, check in pairs(settingsChecks) do
-            check:SetChecked(TotemButtonsDB[key] ~= false)
-        end
-        if UpdateRangeOptions then UpdateRangeOptions() end
-    end)
+    settingsCategory = addon.BuildSettings({
+        className = className,
+        class = class,
+        isShaman = isShaman,
+        elements = elements,
+        states = states,
+        UsesTimedAura = UsesTimedAura,
+        UpdateTimedAura = UpdateTimedAura,
+        PaintSelection = PaintSelection,
+        flyoutModifiers = flyoutModifiers,
+        KeyboardFlyoutModifier = KeyboardFlyoutModifier,
+        EditModeActive = EditModeActive,
+        SyncSlotKeys = SyncSlotKeys,
+        ApplyFlyoutModifier = ApplyFlyoutModifier,
+        ApplyStockBarVisibility = ApplyStockBarVisibility,
+        UpdateStormstrikeAlert = UpdateStormstrikeAlert,
+        minCountdownPercent = minCountdownPercent,
+        maxCountdownPercent = maxCountdownPercent,
+        UpdateCountdownFont = UpdateCountdownFont,
+        RefreshTimedAuras = RefreshTimedAuras,
+        PaintButton = PaintButton,
+        judgementSpell = judgementSpell,
+        PickUpButton = PickUpButton,
+        WatchDragRelease = WatchDragRelease,
+        flyoutCastOptions = flyoutCastOptions,
+    })
 end
 
 local events = CreateFrame("Frame")
@@ -2187,6 +2561,7 @@ end
 
 events:RegisterEvent("ADDON_LOADED")
 events:RegisterEvent("UPDATE_BINDINGS")
+events:RegisterEvent("CVAR_UPDATE")
 events:RegisterEvent("ADDON_ACTION_BLOCKED")
 events:RegisterEvent("ADDON_ACTION_FORBIDDEN")
 events:RegisterEvent("PLAYER_LOGIN")
@@ -2217,6 +2592,10 @@ if isPaladin then
     events:RegisterEvent("UPDATE_SHAPESHIFT_FORMS")
 end
 events:SetScript("OnEvent", function(_, event, slot, action, spellID)
+    if event == "PLAYER_ENTERING_WORLD" or event == "PLAYER_REGEN_ENABLED"
+        or (event == "PLAYER_TOTEM_UPDATE" and (not Readable(slot) or slot == nil or slot == 4)) then
+        RefreshSentryStatus()
+    end
     if #elements == 0 then
         if event == "PLAYER_LOGIN" then BuildSettings() end
         return
@@ -2234,12 +2613,19 @@ events:SetScript("OnEvent", function(_, event, slot, action, spellID)
         end
         return
     end
-    if event == "UPDATE_BINDINGS" then
-        ScheduleSlotKeys()
+    if event == "UPDATE_BINDINGS" or event == "CVAR_UPDATE" then
+        if event == "UPDATE_BINDINGS" then ScheduleSlotKeys() end
+        if not InCombatLockdown()
+            and (event == "UPDATE_BINDINGS" or slot == "enableMouseoverCast") then
+            for _, state in ipairs(states) do
+                UpdateMouseoverModifier(state)
+            end
+        end
         return
     elseif event == "ADDON_LOADED" then
         if slot == "Blizzard_QuickKeybind" then HookQuickKeybind() end
-        if TotemButtonsDB and (slot == "Bartender4" or slot == "EllesmereUIActionBars") then
+        if TotemButtonsDB and (slot == "Bartender4" or slot == "EllesmereUIActionBars"
+            or slot == "Blizzard_GamepadActionBars") then
             if slot == "Bartender4" then HookBartenderKeybind() end
             ScheduleRefresh()
         end
@@ -2257,7 +2643,7 @@ events:SetScript("OnEvent", function(_, event, slot, action, spellID)
         TotemButtonsDB.grayFireNova = nil
         TotemButtonsDB.primarySlots = TotemButtonsDB.primarySlots or {}
         TotemButtonsDB.includeNonBuffTotems = TotemButtonsDB.includeNonBuffTotems == true
-        TotemButtonsDB.shiftFlyouts = TotemButtonsDB.shiftFlyouts == true
+        addon.MigrateHoverModifier(TotemButtonsDB)
         local countdownPercent = tonumber(TotemButtonsDB.countdownPercent)
         local previousSize = tonumber(TotemButtonsDB.countdownSize)
         if not countdownPercent then
@@ -2278,10 +2664,6 @@ events:SetScript("OnEvent", function(_, event, slot, action, spellID)
         end
         BuildSettings()
         EventRegistry:RegisterCallback("EditMode.Exit", ScheduleRefresh, events)
-        C_Timer.NewTicker(0.25, function()
-            if isShaman then UpdateTotemRanges() end
-            RefreshTimedAuras()
-        end)
     end
     if event == "PLAYER_ENTERING_WORLD" then
         if isShaman then RefreshTotemTalents() end
@@ -2290,7 +2672,19 @@ events:SetScript("OnEvent", function(_, event, slot, action, spellID)
         C_Timer.After(0.25, function() ReconcileSlotKeys(true) end)
         C_Timer.After(1, function() ReconcileSlotKeys(false) end)
     end
-    if event == "UNIT_SPELLCAST_SUCCEEDED" then
+    if event == "ACTIONBAR_SLOT_CHANGED" and Readable(slot) and type(slot) == "number" and slot > 0 then
+        for _, state in ipairs(states) do
+            if state.action == slot or state.crossbarSlot == slot then
+                ScheduleRefresh()
+                return
+            end
+        end
+        local kind, id = GetActionInfo(slot)
+        if not Readable(kind) or (kind == "macro"
+            and (not Readable(id) or (id and MacroButton(GetMacroBody(id))))) then
+            ScheduleRefresh()
+        end
+    elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
         NotePlayerCast(spellID)
     elseif event == "PLAYER_REGEN_DISABLED" then
         for _, state in ipairs(states) do
@@ -2309,7 +2703,9 @@ events:SetScript("OnEvent", function(_, event, slot, action, spellID)
         end
     elseif event == "SPELL_UPDATE_COOLDOWN" then
         for _, state in ipairs(states) do
-            if state.host and (state.slot or state.kind == "nova") then PaintSelection(state) end
+            if state.host and (state.slot or state.kind == "nova" or state.kind == "judgement") then
+                PaintSelection(state)
+            end
         end
     elseif event == "PLAYER_TOTEM_UPDATE" then
         local slotKnown = Readable(slot) and slot ~= nil
@@ -2333,6 +2729,7 @@ events:SetScript("OnEvent", function(_, event, slot, action, spellID)
             end
         end
     elseif event == "UNIT_AURA" or event == "UPDATE_SHAPESHIFT_FORM" or event == "UPDATE_SHAPESHIFT_FORMS" then
+        if event == "UNIT_AURA" then RefreshJudgementSeals() end
         for _, state in ipairs(states) do
             if UsesTimedAura(state) then
                 UpdateTimedAura(state, action)
@@ -2373,6 +2770,10 @@ SlashCmdList.TOTEMBUTTONS = function(message)
                 end
             end
         end
+        return
+    end
+    if key == "stormstrike" and TestStormstrikeGlow then
+        TestStormstrikeGlow()
         return
     end
     if key == "novastatus" and isShaman then

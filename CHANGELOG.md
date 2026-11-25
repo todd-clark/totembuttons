@@ -1,5 +1,104 @@
 # Changelog
 
+## 0.1.82
+
+- Position controller flyouts above the crossbar slot captured at button-down, with a visible fallback if its coordinates are unavailable.
+
+## 0.1.81
+
+- Restore the visible flyout fallback for hidden or unavailable slot anchors.
+
+## 0.1.80
+
+- Anchor flyouts above the slot that opened them, including across controller layer visibility changes.
+
+## 0.1.79
+
+- Shorten the controller hold required to open a flyout.
+
+
+## 0.1.78
+
+- Open controller flyouts as soon as the hold is recognized, while the slot button is still down.
+
+## 0.1.77
+
+- Keep controller press and release on the native crossbar binding to avoid dropping quick taps when the key is rebound mid-press.
+
+## 0.1.76
+
+- Detect native gamepad UI mode and fit Totem Buttons icons to Blizzard's crossbar icon masks.
+
+## 0.1.75
+
+- Listen for both edges on bindable controller slots and restart hold tracking on a new press after a missed release.
+
+## 0.1.74
+
+- Restore the previous controller initialization and input handling after the hold timer caused macro icons to appear as question marks.
+
+## 0.1.73
+
+- Measure controller holds with a timed secure frame so quick taps cast and only hold-and-release opens the flyout.
+
+## 0.1.72
+
+- Add an Appearance checkbox to toggle the Stormstrike reset indicator. It is enabled by default.
+
+## 0.1.71
+
+- Native WoW Forever controller crossbar support. Tap the slot button to cast, or hold and release it to open the flyout. On Xbox-style controls, use D-pad Up/Down to browse, A to select, and B to cancel.
+- Flyouts share mouse hover and wheel navigation across mouse, keyboard, and controller. Release the modifier to confirm a changed selection.
+- Use the selected Modifier key with Fire Nova to drop Magma Totem. Active Sentry Totem switches views with left-click or its keybind out of combat. Right-click dismisses it.
+- Consolidate settings into a single panel and update the flyout and Stormstrike highlights with a softer glow.
+
+
+## 0.1.70
+
+- Share wheel and mouse selection across flyouts and confirm hover selections when the modifier is released.
+
+## 0.1.69
+
+- Remove the Flyouts heading and label the dropdown Modifier key.
+
+
+## 0.1.68
+
+- Use the selected flyout modifier with Fire Nova to drop Magma Totem.
+- Consolidate settings into one panel with no scrolling and shorter shortcut tips.
+- Soften the rounded inner and outer glow for Stormstrike and flyout choices. Mouse-opened flyouts highlight the current choice and move the glow as you hover.
+
+
+## 0.1.67
+
+- Out of combat, left-click an active Sentry Totem or press its keybind to switch views. Right-click dismisses it.
+
+
+## 0.1.66
+
+- Add keyboard flyouts with a configurable Shift, Ctrl, or Alt modifier. Hold the modifier, open the flyout with the slot bind, scroll to a spell, and release the modifier to select it.
+- Support the native Forever controller crossbar. Tap and release to cast, or hold and release to open the flyout for the slot you pressed.
+- Add a Paladin Judgement slot with a seal picker for use out of combat when you have no seal active.
+- Honor WoW mouseover casting for eligible spells on Totem Buttons slots.
+- Show a blue-white lightning highlight on early Stormstrike resets when the client exposes an applicable signal.
+- Reduce idle aura and totem polling and avoid full refreshes for unrelated action-slot changes.
+
+## 0.1.65
+
+- Show the Magma Totem shortcuts beside Fire Nova in the options menu.
+
+## 0.1.64
+
+- Ctrl plus a Fire Nova binding drops Magma Totem while the Fire Nova button is active.
+
+## 0.1.63
+
+- Ctrl-left-click Fire Nova to drop the highest learned rank of Magma Totem.
+
+## 0.1.62
+
+- Flash Stormstrike action buttons gold when the game signals a proc or a readable Stormstrike cooldown ends early.
+
 ## 0.1.61
 
 - Draw the totem duration sweep and countdown numbers above the buff icon overlay.
