@@ -79,11 +79,19 @@ function addon.CreateCrossbar(deps)
         if elapsed == "alternate" then flyout:CallMethod("ShowAlternateIcon") end
         if not spell then return false end
         local owner = flyout:GetFrameRef("castOwner")
-        local aura = owner:RunAttribute("getSentryViewAura", spell)
-        local unit
-        if not aura then unit = owner:RunAttribute("resolveMouseoverUnit", spell) end
-        self:SetAttribute("*type-TotemButtonsRelease", aura and "cancelaura" or "spell")
-        self:SetAttribute("*spell-TotemButtonsRelease", aura or spell)
+        if spell == 6495 then
+            local sentry = owner:GetFrameRef("sentryStatus")
+            local aura = keyButton:GetAttribute("*spell-sentryview")
+            if aura and sentry and sentry:GetAttribute("state-sentrycombat") == "peace"
+                and sentry:GetAttribute("sentryActive") then
+                self:SetAttribute("*spell-TotemButtonsSentryView", aura)
+                self:SetAttribute("tbPreviousKeyDown", self:GetAttribute("useOnKeyDown"))
+                self:SetAttribute("useOnKeyDown", false)
+                return "TotemButtonsSentryView", true
+            end
+        end
+        local unit = owner:RunAttribute("resolveMouseoverUnit", spell)
+        self:SetAttribute("*spell-TotemButtonsRelease", spell)
         self:SetAttribute("*unit-TotemButtonsRelease", unit)
         self:SetAttribute("tbPreviousKeyDown", self:GetAttribute("useOnKeyDown"))
         self:SetAttribute("useOnKeyDown", false)
@@ -92,9 +100,9 @@ function addon.CreateCrossbar(deps)
     local afterClick = [[
         self:SetAttribute("useOnKeyDown", self:GetAttribute("tbPreviousKeyDown"))
         self:SetAttribute("tbPreviousKeyDown", nil)
-        self:SetAttribute("*type-TotemButtonsRelease", nil)
         self:SetAttribute("*spell-TotemButtonsRelease", nil)
         self:SetAttribute("*unit-TotemButtonsRelease", nil)
+        self:SetAttribute("*spell-TotemButtonsSentryView", nil)
     ]]
 
     local function UpdateCrossbarIcon(button)
@@ -197,6 +205,8 @@ function addon.CreateCrossbar(deps)
                     and GamepadActionBarBindingUtil.IsBindablePageUnitSlotID(slotID) then
                     button:RegisterForClicks("AnyDown", "AnyUp")
                     button:SetAttribute("tbPhysicalButton", physical)
+                    button:SetAttribute("*type-TotemButtonsRelease", "spell")
+                    button:SetAttribute("*type-TotemButtonsSentryView", "cancelaura")
                     SecureHandlerWrapScript(button, "OnClick", controller, beforeClick, afterClick)
                     local nativeIcon = button.icon
                     local layer, sublevel = nativeIcon:GetDrawLayer()

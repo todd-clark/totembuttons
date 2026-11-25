@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.91
+
+- Restore the controller Sentry Totem view toggle through a dedicated secure action.
+
+## 0.1.90
+
+- Restore the 0.1.88 casting path after the controller Sentry Totem change caused button failures.
+
 ## 0.1.89
 
 - Tap an active Sentry Totem on the native controller crossbar to switch views out of combat.

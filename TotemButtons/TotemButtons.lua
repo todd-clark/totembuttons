@@ -1706,18 +1706,12 @@ local function Build(state)
             castButton:SetAttribute("*type-sentryview", "cancelaura")
         end
         SecureHandlerSetFrameRef(owner, "sentryStatus", sentryStatus)
-        owner:SetAttribute("sentryViewAura", sentryName)
-        owner:SetAttribute("getSentryViewAura", [[
-            local spell = ...
-            local sentry = self:GetFrameRef("sentryStatus")
-            if spell == 6495 and sentry:GetAttribute("state-sentrycombat") == "peace"
-                and sentry:GetAttribute("sentryActive") then
-                return self:GetAttribute("sentryViewAura")
-            end
-        ]])
         castUnit = [[
+            local sentry = control:GetFrameRef("sentryStatus")
             local spell = self:GetAttribute("spell1") or self:GetAttribute("spell")
-            if button == "LeftButton" and control:RunAttribute("getSentryViewAura", spell) then
+            if button == "LeftButton" and spell == 6495
+                and sentry:GetAttribute("state-sentrycombat") == "peace"
+                and sentry:GetAttribute("sentryActive") then
                 self:SetAttribute("unit", nil)
                 return "sentryview", true
             end

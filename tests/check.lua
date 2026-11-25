@@ -65,4 +65,41 @@ assert(flyout.button.spell1 == 3599 and flyout.keyButton.spell == 3599)
 flyout.isJudgementPicker = true
 selectSpell(20154)
 assert(flyout.selectedSeal == 20154 and flyout.button.spell1 == 3599)
+local crossbar = read(folder .. "Crossbar.lua")
+local beforeClick = assert(loadstring(assert(crossbar:match("local beforeClick = %[%[(.-)%]%]"))))
+local afterClick = assert(loadstring(assert(crossbar:match("local afterClick = %[%[(.-)%]%]"))))
+local slot, owner, sentry = fakeFrame(), fakeFrame(), fakeFrame()
+slot.tbPhysicalButton, slot.useOnKeyDown = 1, true
+flyout.castOwner = owner
+flyout.keyButton["*spell-sentryview"] = "Sentry Totem"
+owner.RunAttribute = function(_, method)
+    assert(method == "resolveMouseoverUnit")
+    return "mouseover"
+end
+owner.GetFrameRef = function(_, key)
+    error("Normal controller casting must not look up the Sentry status: " .. key)
+end
+local env = { self = slot, pending = {}, pressed = {}, ticks = {} }
+setfenv(beforeClick, env)
+setfenv(afterClick, env)
+local function release(spell, held, expectedAction, expectedSpell)
+    flyout.keyButton.spell = spell
+    env.pending[1], env.pressed[1], env.ticks[1] = flyout, slot, held
+    local action, cleanup = beforeClick()
+    assert(action == expectedAction and cleanup == true and slot.useOnKeyDown == false)
+    assert(slot["*spell-" .. expectedAction] == expectedSpell)
+    afterClick()
+    assert(slot.useOnKeyDown == true and slot["*spell-" .. expectedAction] == nil)
+end
+release(3599, 0, "TotemButtonsRelease", 3599)
+flyout.keyButton.spell2 = 8190
+flyout.CallMethod = function() end
+release(1535, "alternate", "TotemButtonsRelease", 8190)
+owner.GetFrameRef = function() return sentry end
+sentry["state-sentrycombat"], sentry.sentryActive = "peace", true
+release(6495, 0, "TotemButtonsSentryView", "Sentry Totem")
+sentry["state-sentrycombat"] = "combat"
+release(6495, 0, "TotemButtonsRelease", 6495)
+sentry["state-sentrycombat"], sentry.sentryActive = "peace", false
+release(6495, 0, "TotemButtonsRelease", 6495)
 print("Totem Buttons checks passed")
