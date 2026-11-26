@@ -1,5 +1,100 @@
 # Changelog
 
+## 0.2.23
+
+- Draw Judgement's cooldown sweep above its colored aura artwork on action bars and the gamepad crossbar.
+
+## 0.2.22
+
+- Use Blizzard's aura display to restore Judgement's color when a seal is applied in combat.
+
+## 0.2.21
+
+- Gray out Judgement without an active seal when the Paladin gray-out option is enabled, and describe it in the option tooltip.
+
+## 0.2.20
+
+- Restore normal button icons on combat entry and refresh the gathering reminder when combat ends.
+
+## 0.2.19
+
+- Show gathering tracking on action buttons out of combat when tracking is off. Enable the option by default.
+
+## 0.2.18
+
+- Add a per-character gathering tracking reminder setting, off by default.
+
+## 0.2.17
+
+- Limit the gathering tracking reminder to Find Herbs and Find Minerals.
+
+## 0.2.16
+
+- Show a center-screen reminder when a known herb, mineral, or fish tracker is available and gathering tracking is off.
+
+## 0.2.15
+
+- Let the Judgement button apply the chosen seal out of combat while a different seal is still active.
+
+## 0.2.14
+
+- Retain the seal chosen from the Judgement flyout in combat and refresh the button when combat ends.
+
+## 0.2.13
+
+- Clarify the two-press Judgement sequence and label the Seals flyout's cast-on-selection setting.
+
+## 0.2.12
+
+- Restore separate presses for applying a Paladin seal and casting Judgement.
+
+## 0.2.11
+
+- Cast the selected Paladin seal and Judgement on the same press when starting out of combat with no active seal.
+
+## 0.2.10
+
+- Fix the Paladin Judgement button so selecting a seal updates its icon and cast action out of combat.
+
+## 0.2.09
+
+- Reduce the inward and outward reach of the Stormstrike lightning zigzag by 25%.
+
+
+## 0.2.08
+
+- Halve the number of Stormstrike lightning zigzags and restore their original depth.
+
+
+## 0.2.07
+
+- Halve the depth of the Stormstrike lightning zigzag.
+
+
+## 0.2.06
+
+- Show the low-mana tint while Lightning Shield is active, including when its native aura artwork is restricted.
+
+## 0.2.05
+
+- Double the length of the Stormstrike lightning bolt.
+
+
+## 0.2.04
+
+- Draw the Stormstrike lightning above slot artwork and extend its inward zigzag.
+
+
+## 0.2.03
+
+- Double the Stormstrike lightning thickness and let the bolt cross the slot edge as it circles.
+
+
+## 0.2.02
+
+- Loop the Stormstrike reset lightning for as long as the indicator is active.
+
+
 ## 0.2.01
 
 - Release the current controller, flyout, and cooldown updates as 0.2.01.

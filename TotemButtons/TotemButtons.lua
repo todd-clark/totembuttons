@@ -1,4 +1,6 @@
 local addonName, addon = ...
+addon.StartGatheringReminder()
+
 local className, class = UnitClass("player")
 local isShaman = class == "SHAMAN"
 local isPaladin = class == "PALADIN"
@@ -54,10 +56,11 @@ local function Readable(value)
 end
 
 local function PaintAuraManaTint(art, lowMana)
-    if art.lowMana == lowMana then return end
+    if art.lowMana == lowMana then return true end
     local shade = lowMana and 0.5 or 1
     if pcall(art.icon.SetVertexColor, art.icon, shade, shade, 1) then
         art.lowMana = lowMana
+        return true
     end
 end
 
@@ -136,7 +139,19 @@ local function AuraLayerOpacity(state, parentAlpha)
     return 0
 end
 
+local function UpdateAuraManaTint(layer, state)
+    local lowMana = state.lowMana == true
+    local painted = false
+    for _, art in ipairs(layer.buttons) do
+        if PaintAuraManaTint(art, lowMana) then painted = true end
+    end
+    -- A restricted aura child may reject tinting. Let the tinted base icon
+    -- show through the addon-owned shield layer in that case.
+    layer.host.manaDim = state.kind == "shield" and lowMana and not painted and 0.35 or nil
+end
+
 local function SetAuraLayerOpacity(host, alpha)
+    alpha = alpha * (host.manaDim or 1)
     if host:GetAlpha() ~= alpha then host:SetAlpha(alpha) end
 end
 
@@ -233,29 +248,52 @@ local function ActiveEffect(state, name)
     end
 end
 
+local function GatheringSpell()
+    if not addon.gatheringInCombat and not InCombatLockdown() then
+        return addon.gatheringStatus:GetAttribute("spell")
+    end
+end
+
 local function UpdateTimedAuraArtwork(state)
     local art = state.crossbarArt or state
     local host = art.host
     local button = state.crossbarArt and host or state.button
     local selected = state.button:GetAttribute("spell1")
     local name = selected and C_Spell.GetSpellName(selected)
+    local judgement = state.kind == "judgement" and state.flyout:GetAttribute("judgementSpell")
+    if judgement then name = C_Spell.GetSpellName(judgement) end
     local canUpdateLayout = not InCombatLockdown()
     local totem = state.slot ~= nil
     local assist = totem or UnitCanAssist("player", "player")
-    local visible = host and not EditModeActive() and button:IsVisible() and Readable(assist) and assist == true
+    local gathering = GatheringSpell()
+    local visible = host and (judgement or not gathering) and not EditModeActive()
+        and button:IsVisible() and Readable(assist) and assist == true
     if visible and name and canUpdateLayout then
         if not C_AddOns.IsAddOnLoaded("Blizzard_AuraContainer") then
             C_AddOns.LoadAddOn("Blizzard_AuraContainer")
         end
         if C_AddOns.IsAddOnLoaded("Blizzard_AuraContainer") then
             state.nativeAuraLayers = state.nativeAuraLayers or {}
-            for index, baseSpell in ipairs(state.spells) do
-                local choice = state.choices[index]
-                local spellName = C_Spell.GetSpellName(baseSpell)
-                local buffIDs = totem and totemAuraIDsByName[spellName]
-                if spellName and choice and choice.spellID and (not totem or buffIDs)
-                    and not state.nativeAuraLayers[spellName] then
-                    state.nativeAuraLayers[spellName] = CreateTimedAuraLayer(state, baseSpell, buffIDs)
+            if judgement and not state.nativeAuraLayers[name] then
+                local sealIDs = {}
+                for index, baseSpell in ipairs(state.spells) do
+                    sealIDs[#sealIDs + 1] = baseSpell
+                    for _, rank in ipairs(timedAuraRanks[baseSpell] or {}) do
+                        sealIDs[#sealIDs + 1] = rank
+                    end
+                    local choice = state.choices[index]
+                    if choice and choice.spellID then sealIDs[#sealIDs + 1] = choice.spellID end
+                end
+                state.nativeAuraLayers[name] = CreateTimedAuraLayer(state, judgement, sealIDs)
+            elseif not judgement then
+                for index, baseSpell in ipairs(state.spells) do
+                    local choice = state.choices[index]
+                    local spellName = C_Spell.GetSpellName(baseSpell)
+                    local buffIDs = totem and totemAuraIDsByName[spellName]
+                    if spellName and choice and choice.spellID and (not totem or buffIDs)
+                        and not state.nativeAuraLayers[spellName] then
+                        state.nativeAuraLayers[spellName] = CreateTimedAuraLayer(state, baseSpell, buffIDs)
+                    end
                 end
             end
         end
@@ -263,10 +301,11 @@ local function UpdateTimedAuraArtwork(state)
     if not state.nativeAuraLayers then return false end
 
     for spellName, layer in pairs(state.nativeAuraLayers) do
-        local show = visible and spellName == name
+        local show = visible and spellName == name and (not judgement
+            or (selected == judgement and not gathering and TotemButtonsDB.greyInactive ~= false))
         -- Crossbar layers can move in combat. Reposition the addon-owned
         -- overlay independently of changes to the native aura children.
-        if visible and (show or totem) and (canUpdateLayout or state.crossbarArt) then
+        if visible and (show or totem or judgement) and (canUpdateLayout or state.crossbarArt) then
             local x, y = art.icon:GetCenter()
             local width, height = art.icon:GetSize()
             if Readable(x) and Readable(y) and Readable(width) and Readable(height)
@@ -298,7 +337,8 @@ local function UpdateTimedAuraArtwork(state)
                 end
                 if canUpdateLayout then
                     layer.artWidth, layer.artHeight = width, height
-                    if not totem and selected and not layer.spells[selected] and layer.container.SetAuraGroupCandidateFilters then
+                    if not totem and not judgement and selected and not layer.spells[selected]
+                        and layer.container.SetAuraGroupCandidateFilters then
                         layer.spells[selected] = true
                         layer.container:SetAuraGroupCandidateFilters("shield", { includeSpellIDs = layer.spells })
                     end
@@ -326,7 +366,6 @@ local function UpdateTimedAuraArtwork(state)
                                 auraButton.icon:SetTexture(texture)
                                 auraButton.texture = texture
                             end
-                            PaintAuraManaTint(auraButton, state.lowMana == true)
                             if auraButton.cooldown then
                                 UpdateCountdownFont(auraButton, button:GetWidth() * ratio, button:GetHeight() * ratio)
                                 local hideNumbers = TotemButtonsDB.showCountdown == false
@@ -344,6 +383,7 @@ local function UpdateTimedAuraArtwork(state)
             show = show and TotemButtonsDB.showRangeTint ~= false and ActiveEffect(state, name) ~= nil
         end
         if show and layer.width then
+            UpdateAuraManaTint(layer, state)
             SetAuraLayerOpacity(layer.host, AuraLayerOpacity(state, UIParent:GetEffectiveAlpha()))
             layer.host:Show()
         else
@@ -363,9 +403,7 @@ local function UpdateLowMana(state, spell)
     state.lowMana = lowMana
     if state.nativeAuraLayers then
         for _, layer in pairs(state.nativeAuraLayers) do
-            for _, art in ipairs(layer.buttons) do
-                if not art.button:IsForbidden() then PaintAuraManaTint(art, lowMana) end
-            end
+            UpdateAuraManaTint(layer, state)
         end
     end
     return true
@@ -380,7 +418,7 @@ local function PaintButtonTint(state, effect)
         tint = TotemButtonsDB.includeNonBuffTotems == true and effect.rangeKnown and effect.outOfRange
     end
     local art = state.crossbarArt or state
-    local color = tint and "range" or (state.lowMana and "mana" or "normal")
+    local color = not GatheringSpell() and (tint and "range" or (state.lowMana and "mana" or "normal")) or "normal"
     if art.buttonTint == color then return end
     if color == "range" then
         art.icon:SetVertexColor(1, 0.25, 0.25)
@@ -526,33 +564,15 @@ local function PaladinAuraActive(name)
     return PlayerAuraActive(name)
 end
 
-local function RefreshJudgementSeals()
-    if not isPaladin or InCombatLockdown() then return end
-    local active
-    for _, state in ipairs(states) do
-        if state.kind == "judgement" and (state.host or state.crossbarSlot) then
-            if active == nil then
-                active = false
-                for _, seal in ipairs(paladinSeals) do
-                    if PlayerAuraActive(C_Spell.GetSpellName(seal)) then
-                        active = true
-                        break
-                    end
-                end
-            end
-            if state.flyout:GetAttribute("hasActiveSeal") ~= active then
-                state.flyout:SetAttribute("hasActiveSeal", active)
-            end
-        end
-    end
-end
+local activeJudgementSeal
 
 local function PaintSelection(state)
     if EditModeActive() then return end
     local art = state.crossbarArt or state
     local selected = state.button:GetAttribute("spell1")
     local name = selected and C_Spell.GetSpellName(selected)
-    local displaySpell = art.alternateSpell or selected
+    local gathering = not art.alternateSpell and GatheringSpell()
+    local displaySpell = art.alternateSpell or gathering or selected
     local texture = displaySpell and C_Spell.GetSpellTexture(displaySpell)
     local effect = ActiveEffect(state, name)
     art.icon:SetTexture(texture or 134400)
@@ -560,7 +580,12 @@ local function PaintSelection(state)
     UpdateLowMana(state, selected)
     if state.kind == "aura" then
         art.icon:SetDesaturated(TotemButtonsDB.greyInactive ~= false and not PaladinAuraActive(name))
-    elseif state.kind ~= "nova" and state.kind ~= "judgement" then
+    elseif state.kind == "judgement" then
+        local nativeSealDisplay = UpdateTimedAuraArtwork(state)
+        art.icon:SetDesaturated(TotemButtonsDB.greyInactive ~= false
+            and selected ~= nil and selected == state.flyout:GetAttribute("judgementSpell")
+            and (nativeSealDisplay or not activeJudgementSeal))
+    elseif state.kind ~= "nova" then
         art.icon:SetDesaturated(not effect and TotemButtonsDB.greyInactive ~= false)
     end
     if state.slot and art.host then UpdateTimedAuraArtwork(state) end
@@ -572,6 +597,7 @@ local function PaintSelection(state)
             PaintFireNovaTint(art.icon)
         end
     end
+    if gathering then art.icon:SetDesaturated(false) end
     if selected and state.kind ~= "judgement" then TotemButtonsDB[state.key] = selected end
 
     PaintGlobalCooldown(art, selected)
@@ -582,9 +608,9 @@ local function PaintSelection(state)
     cooldown:SetHideCountdownNumbers(hideNumbers)
 
     local start, duration, rate, timer
-    if effect then
+    if effect and not gathering then
         start, duration, timer = effect.start, effect.duration, effect.timer
-    elseif selected and (state.slot or state.kind == "nova" or state.kind == "judgement") then
+    elseif not gathering and selected and (state.slot or state.kind == "nova" or state.kind == "judgement") then
         start, duration, rate, timer = ReadSpellCooldown(selected, cooldown)
     end
     local showingSpellCooldown = not effect and (start ~= nil or timer ~= nil)
@@ -605,6 +631,33 @@ local function PaintSelection(state)
         cooldown:Clear()
     end
     art.paintingCooldown = false
+end
+
+local function RefreshJudgementSeals(leavingCombat)
+    if not isPaladin then return end
+    local active, changed
+    local combat = InCombatLockdown()
+    for _, state in ipairs(states) do
+        if state.kind == "judgement" and (state.host or state.crossbarSlot) then
+            if active == nil then
+                active = false
+                for _, seal in ipairs(paladinSeals) do
+                    local name = C_Spell.GetSpellName(seal)
+                    if PlayerAuraActive(name) then
+                        active = name
+                        break
+                    end
+                end
+                changed = activeJudgementSeal ~= active
+                activeJudgementSeal = active
+            end
+            if not combat and (leavingCombat or state.flyout:GetAttribute("activeSeal") ~= active) then
+                state.flyout:SetAttribute("activeSeal", active)
+                SecureHandlerExecute(state.flyout, [[ self:RunAttribute("updateJudgement", "peace") ]])
+            end
+            if changed then PaintSelection(state) end
+        end
+    end
 end
 
 local function FindEffectName(state, spellID, totemName, icon)
@@ -1174,6 +1227,15 @@ local function UpdateTimer(state)
     end
 end
 
+function addon.OnGatheringReminderChanged()
+    for _, state in ipairs(states) do
+        if state.host or state.crossbarArt then
+            if UsesTimedAura(state) then UpdateTimedAuraArtwork(state) end
+            PaintSelection(state)
+        end
+    end
+end
+
 local function PaintButton(button, texture, useSlotBorder)
     local icon = button:CreateTexture(nil, "ARTWORK")
     icon:SetAllPoints()
@@ -1248,10 +1310,13 @@ local function CreateButtonHighlight(button, lightning, color)
     border:SetVertexColor(0.18 + 0.82 * r, 0.18 + 0.82 * g, 0.18 + 0.82 * b)
 
     if lightning then
+        local cooldown = button.cooldown or button.Cooldown
+        local level = cooldown and cooldown:GetFrameLevel() or button:GetFrameLevel()
+        wrapper:SetFrameLevel(math.max(button:GetFrameLevel(), level) + 8)
         local arc = {}
         for index = 1, 4 do
             local line = wrapper:CreateLine(nil, "OVERLAY", nil, 7)
-            line:SetThickness(2)
+            line:SetThickness(4)
             line:SetColorTexture(0.86, 0.97, 1, 1)
             arc[index] = line
         end
@@ -1264,32 +1329,20 @@ local function CreateButtonHighlight(button, lightning, color)
             return -offset, (edge - 3) * height
         end
 
-        function wrapper:ShowHaloOnly()
-            for _, line in ipairs(arc) do line:Hide() end
-            border:Hide()
-            self:SetAlpha(0.55)
-            self:SetScript("OnUpdate", nil)
-        end
-
         local elapsed = 0
         local function Animate(self, delta)
             elapsed = elapsed + delta
-            if elapsed >= 0.65 then
-                self:ShowHaloOnly()
-                return
-            end
-
             local width, height = self:GetSize()
             local progress = elapsed / 0.65 * 4
-            local x, y = EdgePoint(progress, 1, width, height)
+            local x, y = EdgePoint(progress, -5.25, width, height)
             for index, line in ipairs(arc) do
-                local nextX, nextY = EdgePoint(progress + index * 0.10,
-                    index % 2 == 1 and 5 or 1, width, height)
+                local nextX, nextY = EdgePoint(progress + index * 0.20,
+                    index % 2 == 1 and 3.75 or -5.25, width, height)
                 line:SetStartPoint("BOTTOMLEFT", self, x, y)
                 line:SetEndPoint("BOTTOMLEFT", self, nextX, nextY)
                 x, y = nextX, nextY
             end
-            self:SetAlpha(1 - elapsed / 0.65 * 0.45)
+            self:SetAlpha(1 - math.min(elapsed / 0.65, 1) * 0.45)
         end
         wrapper:SetScript("OnShow", function(self)
             elapsed = 0
@@ -1515,7 +1568,7 @@ hooksecurefunc(GameTooltip, "SetAction", function(tooltip)
 
     for _, state in ipairs(states) do
         if state.host == host and state.button:IsVisible() and state.button:IsMouseOver() then
-            local spell = state.button:GetAttribute("spell1")
+            local spell = GatheringSpell() or state.button:GetAttribute("spell1")
             if spell then tooltip:SetSpellByID(spell) end
             return
         end
@@ -1692,6 +1745,8 @@ local function SetupFlyoutNavigation(state)
         if not spell then return end
         if self:GetAttribute("isJudgementPicker") then
             self:SetAttribute("selectedSeal", spell)
+            self:CallMethod("SaveSelectedSeal", spell)
+            self:RunAttribute("updateJudgement")
         else
             self:GetFrameRef("keyButton"):SetAttribute("spell", spell)
             self:GetFrameRef("button"):SetAttribute("spell1", spell)
@@ -1763,6 +1818,14 @@ local function Build(state)
     local owner = CreateFrame("Frame", nil, UIParent, "SecureHandlerBaseTemplate")
     state.bindOwner = owner
     owner:SetAttribute("resolveMouseoverUnit", resolveMouseoverUnit)
+    SecureHandlerSetFrameRef(owner, "gatheringStatus", addon.gatheringStatus)
+    owner:SetAttribute("resolveGatheringSpell", [[
+        if SecureCmdOptionParse("[nocombat] yes") then
+            return self:GetFrameRef("gatheringStatus"):GetAttribute("spell")
+        end
+    ]])
+    button:SetAttribute("*type-gathering", "spell")
+    keyButton:SetAttribute("*type-gathering", "spell")
     UpdateMouseoverModifier(state)
     -- Set the unit at click time so the same spell action can still use its
     -- normal targeting when there is no eligible mouseover.
@@ -1785,6 +1848,16 @@ local function Build(state)
             end
         ]] .. castUnit
     end
+    castUnit = [[
+        if button == "LeftButton" then
+            local gathering = control:RunAttribute("resolveGatheringSpell")
+            if gathering then
+                self:SetAttribute("*spell-gathering", gathering)
+                self:SetAttribute("unit", nil)
+                return "gathering"
+            end
+        end
+    ]] .. castUnit
     SecureHandlerWrapScript(button, "OnClick", owner, castUnit)
     SecureHandlerWrapScript(keyButton, "OnClick", owner, [[
         if not down then
@@ -1870,7 +1943,7 @@ local function Build(state)
         end
     end)
     local function ShowSpellTooltip(self)
-        local spell = self:GetAttribute("spell1")
+        local spell = GatheringSpell() or self:GetAttribute("spell1")
         if not spell then return end
         GameTooltip_SetDefaultAnchor(GameTooltip, self)
         GameTooltip:SetSpellByID(spell)
@@ -1882,13 +1955,14 @@ local function Build(state)
     button:SetScript("OnEnter", ShowSpellTooltip)
     button:SetScript("OnLeave", HideSpellTooltip)
     button:HookScript("OnHide", HideSpellTooltip)
-    if UsesTimedAura(state) then
+    if UsesTimedAura(state) or state.kind == "judgement" then
         button:HookScript("OnHide", function()
             if not state.nativeAuraLayers then return end
             for _, layer in pairs(state.nativeAuraLayers) do layer.host:Hide() end
         end)
         button:HookScript("OnShow", function()
-            if state.host then UpdateTimedAura(state) end
+            if not state.host then return end
+            if state.kind == "judgement" then PaintSelection(state) else UpdateTimedAura(state) end
         end)
     end
     button:HookScript("OnAttributeChanged", function(self, attribute)
@@ -1928,23 +2002,20 @@ local function Build(state)
     if state.kind == "judgement" then
         flyout:SetAttribute("isJudgementPicker", true)
         flyout:SetAttribute("updateJudgement", [[
+            local combatState = ... or self:GetAttribute("state-judgementcombat")
             local spell = self:GetAttribute("judgementSpell")
-            if self:GetAttribute("state-judgementcombat") == "peace" and not self:GetAttribute("hasActiveSeal") then
-                spell = self:GetAttribute("selectedSeal") or spell
+            local seal = self:GetAttribute("selectedSeal")
+            if combatState == "peace" and seal
+                and self:GetAttribute("sealName-" .. seal) ~= self:GetAttribute("activeSeal") then
+                spell = seal
             end
             self:GetFrameRef("keyButton"):SetAttribute("spell", spell)
             self:GetFrameRef("button"):SetAttribute("spell1", spell)
         ]])
-        flyout:SetAttribute("_onstate-judgementcombat", [[ self:RunAttribute("updateJudgement") ]])
-        SecureHandlerWrapScript(flyout, "OnAttributeChanged", flyout, [[
-            if name == "selectedSeal" or name == "hasActiveSeal" or name == "judgementSpell" then
-                self:RunAttribute("updateJudgement")
-            end
-        ]])
-        flyout:HookScript("OnAttributeChanged", function(_, name, spell)
-            if name == "selectedSeal" and spell then TotemButtonsDB[state.key] = spell end
-        end)
-        owner:SetAttribute("mouseover-" .. judgementSpell, "harm")
+        flyout:SetAttribute("_onstate-judgementcombat", [[ self:RunAttribute("updateJudgement", newstate) ]])
+        function flyout:SaveSelectedSeal(spell)
+            TotemButtonsDB[state.key] = spell
+        end
         RegisterStateDriver(flyout, "judgementcombat", "[combat] fighting; peace")
     end
     flyout:SetAttribute("showChoices", [[
@@ -2055,6 +2126,9 @@ end
 
 local function RefreshChoices(state, known, knownIDs)
     local selected = TotemButtonsDB[state.key]
+    if state.kind == "judgement" then
+        selected = state.flyout:GetAttribute("selectedSeal") or selected
+    end
     local selectedName = selected and C_Spell.GetSpellName(selected)
     local first, retained
     UpdateMouseoverModifier(state)
@@ -2088,9 +2162,12 @@ local function RefreshChoices(state, known, knownIDs)
                 end
             end
             state.bindOwner:SetAttribute("mouseover-" .. spell, reaction)
+            if state.kind == "judgement" then
+                state.flyout:SetAttribute("sealName-" .. spell, name)
+            end
             count = count + 1
             first = first or spell
-            if selectedName == name then retained = spell end
+            if selected == spell or selectedName == name then retained = spell end
             if not choice.selectionGlow then
                 local element = state.slot or spellHighlightSlots[baseID]
                 choice.selectionGlow = CreateButtonHighlight(choice, false, flyoutColors[element] or holyHighlight)
@@ -2114,8 +2191,13 @@ local function RefreshChoices(state, known, knownIDs)
     if state.kind ~= "nova" then ApplyFlyoutModifier(state) end
     local spell = retained or first
     if state.kind == "judgement" then
-        state.flyout:SetAttribute("judgementSpell", knownIDs[judgementSpell] and judgementSpell or nil)
+        local name = C_Spell.GetSpellName(judgementSpell)
+        local judgement = knownIDs[judgementSpell] and judgementSpell or (name and known[name])
+        state.flyout:SetAttribute("judgementSpell", judgement)
         state.flyout:SetAttribute("selectedSeal", spell)
+        if spell then state.flyout:SaveSelectedSeal(spell) end
+        if judgement then state.bindOwner:SetAttribute("mouseover-" .. judgement, "harm") end
+        SecureHandlerExecute(state.flyout, [[ self:RunAttribute("updateJudgement", "peace") ]])
     else
         state.keyButton:SetAttribute("spell", spell)
         state.button:SetAttribute("spell1", spell)
@@ -2304,8 +2386,8 @@ local function FitSlotArtwork(state, host)
     state.slotMask = mask
 end
 
-local function RaiseTotemCooldown(cooldown, button)
-    -- Keep the totem duration sweep above the separate in-range aura artwork.
+local function RaiseAuraLayerCooldown(cooldown, button)
+    -- Keep the sweep above the separate native aura artwork.
     cooldown:SetFrameStrata(button:GetFrameStrata())
     cooldown:SetFrameLevel(button:GetFrameLevel() + 8)
 end
@@ -2313,8 +2395,8 @@ end
 local function RefreshSlotArtwork(state, host)
     state.button:SetFrameStrata(host:GetFrameStrata())
     state.button:SetFrameLevel(host:GetFrameLevel() + 5)
-    if state.slot then
-        RaiseTotemCooldown(state.cooldown, state.button)
+    if state.slot or state.kind == "judgement" then
+        RaiseAuraLayerCooldown(state.cooldown, state.button)
     end
     state.gcd:SetFrameStrata(state.button:GetFrameStrata())
     state.gcd:SetFrameLevel(state.button:GetFrameLevel() + 7)
@@ -2398,7 +2480,7 @@ RefreshCrossbarSlots = addon.CreateCrossbar({
     Refresh = function() Refresh() end,
     UpdateTimer = UpdateTimer,
     UpdateTimedAuraArtwork = UpdateTimedAuraArtwork,
-    RaiseTotemCooldown = RaiseTotemCooldown,
+    RaiseAuraLayerCooldown = RaiseAuraLayerCooldown,
     CreateGlobalCooldown = CreateGlobalCooldown,
     RefreshStormstrikeGlow = RefreshStormstrikeGlow,
     HideMacroLabel = HideMacroLabel,
@@ -2692,6 +2774,10 @@ if isPaladin then
 end
 local capturedGamepadInteractBlock
 events:SetScript("OnEvent", function(_, event, slot, action, spellID)
+    if event == "PLAYER_LOGIN" then
+        TotemButtonsDB = TotemButtonsDB or {}
+    end
+    if event == "PLAYER_REGEN_ENABLED" then RefreshJudgementSeals(true) end
     if event == "PLAYER_ENTERING_WORLD" or event == "PLAYER_REGEN_ENABLED"
         or (event == "PLAYER_TOTEM_UPDATE" and (not Readable(slot) or slot == nil or slot == 4)) then
         RefreshSentryStatus()
@@ -2747,7 +2833,6 @@ events:SetScript("OnEvent", function(_, event, slot, action, spellID)
         if isShaman then RefreshTotemTalents() end
         HookQuickKeybind()
         HookBartenderKeybind()
-        TotemButtonsDB = TotemButtonsDB or {}
         TotemButtonsDB.grayFireNova = nil
         TotemButtonsDB.primarySlots = TotemButtonsDB.primarySlots or {}
         TotemButtonsDB.includeNonBuffTotems = TotemButtonsDB.includeNonBuffTotems == true

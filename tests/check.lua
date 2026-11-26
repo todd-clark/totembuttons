@@ -25,11 +25,12 @@ for filename in toc:gmatch("[^\r\n]+") do
         if filename == "TotemButtons.lua" then main = source end
     end
 end
-assert(main and #sources == 5, "Incomplete addon load list")
+assert(main and #sources == 6, "Incomplete addon load list")
 
 local addon = {}
 for index = 1, #sources - 1 do sources[index].chunk("TotemButtons", addon) end
 assert(addon.BuildSettings and addon.CreateCrossbar and addon.CreateStormstrikeAlert)
+assert(addon.StartGatheringReminder)
 assert(addon.WithFlyoutModifier("ALT-1", "CTRL") == "ALT-CTRL-1")
 assert(addon.WithFlyoutModifier("CTRL-1", "CTRL") == nil)
 assert(addon.WithFlyoutModifier("PAD1", "SHIFT") == nil)
@@ -63,8 +64,39 @@ assert(flyout.button.spell1 == 3599 and flyout.keyButton.spell == 3599)
 selectSpell(nil)
 assert(flyout.button.spell1 == 3599 and flyout.keyButton.spell == 3599)
 flyout.isJudgementPicker = true
+function flyout:CallMethod(method, spell)
+    assert(method == "SaveSelectedSeal")
+    self.savedSeal = spell
+end
+local updateJudgement = assert(loadstring(assert(main:match('SetAttribute%("updateJudgement", %[%[(.-)%]%]'))))
+setfenv(updateJudgement, { self = flyout })
+function flyout:RunAttribute(attribute, ...)
+    assert(attribute == "updateJudgement")
+    return updateJudgement(...)
+end
+flyout.judgementSpell = 20271
+flyout["sealName-20154"] = "Seal of Righteousness"
+flyout["sealName-20164"] = "Seal of Justice"
+local function checkJudgementSpell(spell)
+    assert(flyout.button.spell1 == spell and flyout.keyButton.spell == spell)
+end
+flyout["state-judgementcombat"] = "peace"
+flyout.activeSeal = false
 selectSpell(20154)
-assert(flyout.selectedSeal == 20154 and flyout.button.spell1 == 3599)
+assert(flyout.selectedSeal == 20154)
+checkJudgementSpell(20154)
+flyout.activeSeal = "Seal of Righteousness"
+updateJudgement("peace")
+checkJudgementSpell(20271)
+flyout["state-judgementcombat"] = "fighting"
+selectSpell(20164)
+assert(flyout.selectedSeal == 20164 and flyout.savedSeal == 20164)
+checkJudgementSpell(20271)
+updateJudgement("peace")
+checkJudgementSpell(20164)
+flyout.activeSeal = "Seal of Justice"
+updateJudgement("peace")
+checkJudgementSpell(20271)
 local crossbar = read(folder .. "Crossbar.lua")
 local beforeClick = assert(loadstring(assert(crossbar:match("local beforeClick = %[%[(.-)%]%]"))))
 local afterClick = assert(loadstring(assert(crossbar:match("local afterClick = %[%[(.-)%]%]"))))
@@ -73,6 +105,7 @@ slot.tbPhysicalButton, slot.useOnKeyDown = 1, true
 flyout.castOwner = owner
 flyout.keyButton["*spell-sentryview"] = "Sentry Totem"
 owner.RunAttribute = function(_, method)
+    if method == "resolveGatheringSpell" then return owner.gatheringSpell end
     assert(method == "resolveMouseoverUnit")
     return "mouseover"
 end
@@ -92,9 +125,12 @@ local function release(spell, held, expectedAction, expectedSpell)
     assert(slot.useOnKeyDown == true and slot["*spell-" .. expectedAction] == nil)
 end
 release(3599, 0, "TotemButtonsRelease", 3599)
+owner.gatheringSpell = 2580
+release(3599, 0, "TotemButtonsRelease", 2580)
 flyout.keyButton.spell2 = 8190
 flyout.CallMethod = function() end
 release(1535, "alternate", "TotemButtonsRelease", 8190)
+owner.gatheringSpell = nil
 owner.GetFrameRef = function() return sentry end
 sentry["state-sentrycombat"], sentry.sentryActive = "peace", true
 release(6495, 0, "TotemButtonsSentryView", "Sentry Totem")

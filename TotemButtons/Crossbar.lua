@@ -75,10 +75,11 @@ function addon.CreateCrossbar(deps)
         end
 
         local keyButton = flyout:GetFrameRef("keyButton")
-        local spell = keyButton:GetAttribute(elapsed == "alternate" and "spell2" or "spell")
+        local owner = flyout:GetFrameRef("castOwner")
+        local gathering = elapsed ~= "alternate" and owner:RunAttribute("resolveGatheringSpell")
+        local spell = gathering or keyButton:GetAttribute(elapsed == "alternate" and "spell2" or "spell")
         if elapsed == "alternate" then flyout:CallMethod("ShowAlternateIcon") end
         if not spell then return false end
-        local owner = flyout:GetFrameRef("castOwner")
         if spell == 6495 then
             local sentry = owner:GetFrameRef("sentryStatus")
             local aura = keyButton:GetAttribute("*spell-sentryview")
@@ -90,7 +91,8 @@ function addon.CreateCrossbar(deps)
                 return "TotemButtonsSentryView", true
             end
         end
-        local unit = owner:RunAttribute("resolveMouseoverUnit", spell)
+        local unit
+        if not gathering then unit = owner:RunAttribute("resolveMouseoverUnit", spell) end
         self:SetAttribute("*spell-TotemButtonsRelease", spell)
         self:SetAttribute("*unit-TotemButtonsRelease", unit)
         self:SetAttribute("tbPreviousKeyDown", self:GetAttribute("useOnKeyDown"))
@@ -157,8 +159,8 @@ function addon.CreateCrossbar(deps)
             art.strata, art.level = strata, level
             art.gcd:SetFrameStrata(strata)
             art.gcd:SetFrameLevel(level + 7)
-            if state.slot then
-                deps.RaiseTotemCooldown(art.cooldown, button)
+            if state.slot or state.kind == "judgement" then
+                deps.RaiseAuraLayerCooldown(art.cooldown, button)
             else
                 art.cooldown:SetFrameStrata(strata)
                 art.cooldown:SetFrameLevel(level + 1)

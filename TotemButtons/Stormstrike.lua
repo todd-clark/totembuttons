@@ -41,8 +41,8 @@ function addon.CreateStormstrikeAlert(deps)
         ClearResetGlow()
     end
 
-    local function PaintResetGlow(animate)
-        HideResetGlow()
+    local function PaintResetGlow()
+        local visible = {}
         local shown = 0
         local function PaintButton(button, action)
             if not button:IsVisible() or not Readable(action) or type(action) ~= "number" or action <= 0 then return end
@@ -60,7 +60,7 @@ function addon.CreateStormstrikeAlert(deps)
                 glows[button] = glow
             end
             glow:Show()
-            if not animate then glow:ShowHaloOnly() end
+            visible[button] = true
             shown = shown + 1
         end
         for _, prefix in ipairs(barPrefixes) do
@@ -71,6 +71,9 @@ function addon.CreateStormstrikeAlert(deps)
             end
         end
         addon.ForEachGamepadActionButton(PaintButton)
+        for button, glow in pairs(glows) do
+            if not visible[button] then glow:Hide() end
+        end
         return shown
     end
 
@@ -84,7 +87,7 @@ function addon.CreateStormstrikeAlert(deps)
             resetTimer = nil
             ClearResetGlow()
         end)
-        PaintResetGlow(true)
+        PaintResetGlow()
     end
 
     local function StormstrikeRemaining(now)
@@ -108,11 +111,11 @@ function addon.CreateStormstrikeAlert(deps)
             print("Stormstrike reset indicator is disabled in Totem Buttons settings.")
             return
         end
-        local shown = PaintResetGlow(true)
+        local shown = PaintResetGlow()
         if previewTimer then previewTimer:Cancel() end
         previewTimer = C_Timer.NewTimer(3, function()
             previewTimer = nil
-            if resetReady then PaintResetGlow(false) else HideResetGlow() end
+            if resetReady then PaintResetGlow() else HideResetGlow() end
         end)
         print("Stormstrike glow: " .. shown .. " matching visible buttons"
             .. " | last cooldown event: " .. cooldownRead
@@ -183,13 +186,13 @@ function addon.CreateStormstrikeAlert(deps)
         elseif event == "PLAYER_REGEN_ENABLED" then
             cooldownEnd, castWindowEnd = nil, nil
         elseif resetReady then
-            PaintResetGlow(false)
+            PaintResetGlow()
         else
             HideResetGlow()
         end
     end)
     local function RefreshStormstrikeGlow()
-        if resetReady and Enabled() then PaintResetGlow(false) end
+        if resetReady and Enabled() then PaintResetGlow() end
     end
 
     return TestStormstrikeGlow, UpdateStormstrikeAlert, RefreshStormstrikeGlow

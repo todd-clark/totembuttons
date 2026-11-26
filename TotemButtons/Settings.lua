@@ -45,14 +45,6 @@ function addon.BuildSettings(deps)
 
     local settingsCategory = Settings.RegisterCanvasLayoutCategory(canvas, "Totem Buttons")
     Settings.RegisterAddOnCategory(settingsCategory)
-    if #elements == 0 then
-        local message = canvas:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
-        message:SetPoint("TOPLEFT", logo, "BOTTOMLEFT", 0, -10)
-        message:SetText(className and "No features are available for " .. className .. " characters yet."
-            or "No features are available for this class yet.")
-        return settingsCategory
-    end
-
     local panel = CreateFrame("Frame", nil, canvas)
     panel:SetPoint("TOPLEFT", canvas, "TOPLEFT", 16, -52)
     panel:SetPoint("BOTTOMRIGHT", canvas, "BOTTOMRIGHT", -16, 34)
@@ -72,12 +64,17 @@ function addon.BuildSettings(deps)
         local label = check:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
         label:SetPoint("LEFT", check, "RIGHT", 4, 0)
         label:SetText(text)
+        check:SetChecked(TotemButtonsDB[key] ~= false)
         check:SetScript("OnClick", function(self)
             TotemButtonsDB[key] = not not self:GetChecked()
             onChanged()
         end)
         settingsChecks[key] = check
         return check, label
+    end
+
+    if #elements == 0 then
+        return settingsCategory
     end
 
     local function RefreshAppearance()
@@ -141,7 +138,7 @@ function addon.BuildSettings(deps)
     if isShaman then
         shortcutText = "Right-click to dismiss a totem.\nWith Sentry Totem active, click, use its keybind, or tap on gamepad to switch views out of combat.\nUse the modifier with Fire Nova to drop Magma Totem.\nOn gamepad, hold Fire Nova until the icon changes, then release."
     else
-        shortcutText = "Pick a seal from the Judgement flyout.\nThe button casts that seal when none is active out of combat, and casts Judgement in combat."
+        shortcutText = "Choose a seal in the Judgement flyout.\nOut of combat, press to apply your chosen seal if needed.\nWith your chosen seal active or in combat, press to cast Judgement."
     end
     local shortcuts = AddText(shortcutText, lastButtonRow, -2)
 
@@ -175,7 +172,7 @@ function addon.BuildSettings(deps)
         local kind = state.kind
         local option = flyoutCastOptions[kind]
         if option then
-            local label = kind == "aura" and "Cast aura on selection" or "Cast seal on selection"
+            local label = kind == "aura" and "Cast aura on selection" or "Cast on selection in the Seals flyout"
             lastFlyoutControl = AddCheck(option, label, lastFlyoutControl, 0, function()
                 if InCombatLockdown() or EditModeActive() then return end
                 for _, buttonState in ipairs(states) do
@@ -197,6 +194,13 @@ function addon.BuildSettings(deps)
     else
         grayCheck = AddCheck("greyInactive", "Gray out inactive auras, seals, and buffs",
             displayHeading, -4, RefreshAppearance)
+        grayCheck:SetScript("OnEnter", function(self)
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            GameTooltip:SetText("Gray out inactive auras, seals, and buffs")
+            GameTooltip:AddLine("Also grays out Judgement when you have no active seal.", 1, 1, 1, true)
+            GameTooltip:Show()
+        end)
+        grayCheck:SetScript("OnLeave", function() GameTooltip:Hide() end)
     end
     local countdownCheck = AddCheck("showCountdown", "Show countdown numbers", grayCheck, 0, RefreshAppearance)
     local sizeLabel = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
@@ -224,6 +228,7 @@ function addon.BuildSettings(deps)
     end)
 
     local UpdateRangeOptions
+    local reminderAnchor, reminderIndent = sizeLabel, -24
     if isShaman then
         local rangeCheck = AddCheck("showRangeTint", "Tint active totems red when you are missing their buff",
             sizeLabel, -8, RefreshAppearance, -24)
@@ -235,9 +240,12 @@ function addon.BuildSettings(deps)
             nonBuffLabel:SetAlpha(enabled and 1 or 0.5)
         end
         rangeCheck:HookScript("OnClick", UpdateRangeOptions)
-        AddCheck("showStormstrikeReset", "Show Stormstrike reset indicator",
+        reminderAnchor = AddCheck("showStormstrikeReset", "Show Stormstrike reset indicator",
             nonBuffCheck, 0, deps.UpdateStormstrikeAlert, -24)
+        reminderIndent = 0
     end
+    AddCheck("showGatheringTrackingOnButtons", "Show missing gathering tracking on buttons",
+        reminderAnchor, -4, addon.RefreshGatheringReminder, reminderIndent)
 
     local function FitContent()
         local width = panel:GetWidth()
