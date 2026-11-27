@@ -1,5 +1,50 @@
 # Changelog
 
+## 0.2.34
+
+- Use Blizzard's standard low-mana tint on all buttons, including seals shown by Judgement.
+
+## 0.2.33
+
+- Make the low-mana tint visibly blue when the Judgement button shows a seal.
+
+## 0.2.32
+
+- Hide the global cooldown sweep while the Paladin button shows Judgement.
+
+## 0.2.31
+
+- Shorten settings labels and move control details into hover tooltips.
+
+## 0.2.30
+
+- Remove the Stormstrike reset indicator and its option. Keep the dedicated Stormstrike button and autoattack.
+- Clarify the gathering tracking option.
+
+## 0.2.29
+
+- Restore reset-only lightning on the dedicated Stormstrike button and remove the temporary readiness mode and old button scan.
+
+## 0.2.28
+
+- Add a dedicated Stormstrike button that starts autoattack and carries the lightning indicator on action bars and the gamepad crossbar.
+
+## 0.2.27
+
+- Recognize spell-backed Stormstrike macro slots and look up other macros by their action-bar name.
+
+## 0.2.26
+
+- Temporarily show the Stormstrike lightning whenever it is off cooldown to diagnose the action-button display.
+
+## 0.2.25
+
+- Show the Stormstrike reset indicator on macros that cast Stormstrike even when their resolved spell ID is unavailable.
+
+## 0.2.24
+
+- Detect early Stormstrike resets using cooldown activity when the client hides the remaining duration in combat.
+
 ## 0.2.23
 
 - Draw Judgement's cooldown sweep above its colored aura artwork on action bars and the gamepad crossbar.

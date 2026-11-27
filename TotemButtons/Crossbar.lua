@@ -8,19 +8,6 @@ function addon.IsGamepadUIEnabled()
     return main and main:IsShown()
 end
 
-function addon.ForEachGamepadActionButton(visit)
-    local main = GamepadMainActionBarFrame
-    local page = main and main.PageUnit
-    if not page or not page.actionBars or not addon.IsGamepadUIEnabled() then return end
-    for _, bar in pairs(page.actionBars) do
-        for _, button in ipairs(bar.actionButtons or {}) do
-            if button.GetGamepadPageUnitSlotID and button:GetGamepadPageUnitSlotID() then
-                visit(button, button:GetID())
-            end
-        end
-    end
-end
-
 function addon.CreateCrossbar(deps)
     local Readable = deps.Readable
     local flyoutNavigation = deps.flyoutNavigation
@@ -80,14 +67,19 @@ function addon.CreateCrossbar(deps)
         local spell = gathering or keyButton:GetAttribute(elapsed == "alternate" and "spell2" or "spell")
         if elapsed == "alternate" then flyout:CallMethod("ShowAlternateIcon") end
         if not spell then return false end
+        self:SetAttribute("tbPreviousKeyDown", self:GetAttribute("useOnKeyDown"))
+        self:SetAttribute("useOnKeyDown", false)
+        local stormstrikeMacro = not gathering and keyButton:GetAttribute("stormstrikeMacro")
+        if stormstrikeMacro then
+            self:SetAttribute("*macrotext-TotemButtonsStormstrike", stormstrikeMacro)
+            return "TotemButtonsStormstrike", true
+        end
         if spell == 6495 then
             local sentry = owner:GetFrameRef("sentryStatus")
             local aura = keyButton:GetAttribute("*spell-sentryview")
             if aura and sentry and sentry:GetAttribute("state-sentrycombat") == "peace"
                 and sentry:GetAttribute("sentryActive") then
                 self:SetAttribute("*spell-TotemButtonsSentryView", aura)
-                self:SetAttribute("tbPreviousKeyDown", self:GetAttribute("useOnKeyDown"))
-                self:SetAttribute("useOnKeyDown", false)
                 return "TotemButtonsSentryView", true
             end
         end
@@ -95,8 +87,6 @@ function addon.CreateCrossbar(deps)
         if not gathering then unit = owner:RunAttribute("resolveMouseoverUnit", spell) end
         self:SetAttribute("*spell-TotemButtonsRelease", spell)
         self:SetAttribute("*unit-TotemButtonsRelease", unit)
-        self:SetAttribute("tbPreviousKeyDown", self:GetAttribute("useOnKeyDown"))
-        self:SetAttribute("useOnKeyDown", false)
         return "TotemButtonsRelease", true
     ]]
     local afterClick = [[
@@ -105,6 +95,7 @@ function addon.CreateCrossbar(deps)
         self:SetAttribute("*spell-TotemButtonsRelease", nil)
         self:SetAttribute("*unit-TotemButtonsRelease", nil)
         self:SetAttribute("*spell-TotemButtonsSentryView", nil)
+        self:SetAttribute("*macrotext-TotemButtonsStormstrike", nil)
     ]]
 
     local function ReadCrossbarSlot(button)
@@ -189,7 +180,6 @@ function addon.CreateCrossbar(deps)
             UpdateCrossbarIcon(button, art.nextState)
             art.nextState = nil
         end
-        if deps.RefreshStormstrikeGlow then deps.RefreshStormstrikeGlow() end
     end
 
     local function QueueCrossbarVisuals()
@@ -250,6 +240,7 @@ function addon.CreateCrossbar(deps)
                     button:SetAttribute("tbPhysicalButton", physical)
                     button:SetAttribute("*type-TotemButtonsRelease", "spell")
                     button:SetAttribute("*type-TotemButtonsSentryView", "cancelaura")
+                    button:SetAttribute("*type-TotemButtonsStormstrike", "macro")
                     SecureHandlerWrapScript(button, "OnClick", controller, beforeClick, afterClick)
                     local nativeIcon = button.icon
                     local layer, sublevel = nativeIcon:GetDrawLayer()

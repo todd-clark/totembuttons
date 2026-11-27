@@ -56,14 +56,28 @@ function addon.BuildSettings(deps)
         return heading
     end
 
+    local function AddTooltip(control, title, detail)
+        control:HookScript("OnEnter", function(self)
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            GameTooltip:SetText(title)
+            GameTooltip:AddLine(detail, 1, 1, 1, true)
+            GameTooltip:Show()
+        end)
+        control:HookScript("OnLeave", function(self)
+            if GameTooltip:IsOwned(self) then GameTooltip:Hide() end
+        end)
+    end
+
     local settingsChecks = {}
-    local function AddCheck(key, text, anchor, y, onChanged, indent)
+    local function AddCheck(key, text, detail, anchor, y, onChanged, indent)
         local check = CreateFrame("CheckButton", nil, panel, "UICheckButtonTemplate")
         check:SetSize(24, 24)
         check:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", indent or 0, y)
         local label = check:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
         label:SetPoint("LEFT", check, "RIGHT", 4, 0)
         label:SetText(text)
+        check:SetHitRectInsets(0, -label:GetStringWidth() - 4, 0, 0)
+        AddTooltip(check, text, detail)
         check:SetChecked(TotemButtonsDB[key] ~= false)
         check:SetScript("OnClick", function(self)
             TotemButtonsDB[key] = not not self:GetChecked()
@@ -87,23 +101,18 @@ function addon.BuildSettings(deps)
         end
     end
 
-    local helpLabels = {}
-    local function AddText(text, anchor, gap)
-        local label = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
-        label:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", 0, gap)
-        helpLabels[#helpLabels + 1] = label
-        label:SetJustifyH("LEFT")
-        label:SetText(text)
-        return label
-    end
-
     local buttonsHeading = panel:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
     buttonsHeading:SetPoint("TOPLEFT")
     buttonsHeading:SetText("Add to Action Bars")
-    local instructions = AddText("Use the same icon again to add another copy.",
-        buttonsHeading, -5)
     local buttonRow = CreateFrame("Frame", nil, panel)
-    buttonRow:SetPoint("TOPLEFT", instructions, "BOTTOMLEFT", 0, -9)
+    buttonRow:SetPoint("TOPLEFT", buttonsHeading, "BOTTOMLEFT", 0, -9)
+
+    local buttonDetails = {
+        air = "Right-click to dismiss a totem. While Sentry Totem is active, use the button out of combat to switch views.",
+        nova = "Use the modifier and click or press the keybind to drop Magma Totem. On gamepad, hold the button until its icon changes, then release.",
+        stormstrike = "Starts autoattack against your target and casts Stormstrike.",
+        judgement = "Choose a seal in the flyout. Out of combat, the button applies that seal if needed. With the chosen seal active or in combat, it casts Judgement.",
+    }
     buttonRow:SetSize(1, 55)
 
     local function AddButton(state, row, column)
@@ -122,6 +131,10 @@ function addon.BuildSettings(deps)
         local label = button:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
         label:SetPoint("TOP", button, "BOTTOM", 0, -4)
         label:SetText(state.label)
+        local detail = buttonDetails[state.kind or state.key]
+        if not detail and state.slot then detail = "Right-click to dismiss an active totem." end
+        local placement = "Click or drag to add to a bar. Use the icon again to add another copy."
+        AddTooltip(button, state.label, detail and (placement .. "\n\n" .. detail) or placement)
     end
 
     local lastButtonRow = buttonRow
@@ -134,20 +147,14 @@ function addon.BuildSettings(deps)
         AddButton(state, lastButtonRow, (index - 1) % 4 + 1)
     end
 
-    local shortcutText
-    if isShaman then
-        shortcutText = "Right-click to dismiss a totem.\nWith Sentry Totem active, click, use its keybind, or tap on gamepad to switch views out of combat.\nUse the modifier with Fire Nova to drop Magma Totem.\nOn gamepad, hold Fire Nova until the icon changes, then release."
-    else
-        shortcutText = "Choose a seal in the Judgement flyout.\nOut of combat, press to apply your chosen seal if needed.\nWith your chosen seal active or in combat, press to cast Judgement."
-    end
-    local shortcuts = AddText(shortcutText, lastButtonRow, -2)
-
     local modifierDropdown = CreateFrame("DropdownButton", nil, panel, "WowStyle1DropdownTemplate")
-    modifierDropdown:SetPoint("TOPLEFT", shortcuts, "BOTTOMLEFT", 0, -12)
+    modifierDropdown:SetPoint("TOPLEFT", lastButtonRow, "BOTTOMLEFT", 0, -8)
     modifierDropdown:SetWidth(110)
     local modifierLabel = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
     modifierLabel:SetPoint("LEFT", modifierDropdown, "RIGHT", 8, 0)
     modifierLabel:SetText("Modifier key")
+    AddTooltip(modifierDropdown, "Modifier key",
+        "Hold this key with a button's keybind to open its flyout. Scroll to a choice and release the modifier to select it. On gamepad, hold the button to open the flyout.")
     modifierDropdown:SetupMenu(function(_, root)
         for _, modifier in ipairs(flyoutModifiers) do
             local label = modifier:sub(1, 1) .. modifier:sub(2):lower()
@@ -162,7 +169,8 @@ function addon.BuildSettings(deps)
                 end, modifier)
         end
     end)
-    local hoverModifierCheck = AddCheck("requireHoverModifier", "Require selected modifier for hover flyouts",
+    local hoverModifierCheck = AddCheck("requireHoverModifier", "Modifier for hover",
+        "Hold the selected modifier while pointing at a button to open its flyout.",
         modifierDropdown, -4, function()
             if InCombatLockdown() or EditModeActive() then return end
             for _, state in ipairs(states) do ApplyFlyoutModifier(state) end
@@ -172,8 +180,10 @@ function addon.BuildSettings(deps)
         local kind = state.kind
         local option = flyoutCastOptions[kind]
         if option then
-            local label = kind == "aura" and "Cast aura on selection" or "Cast on selection in the Seals flyout"
-            lastFlyoutControl = AddCheck(option, label, lastFlyoutControl, 0, function()
+            local label = kind == "aura" and "Cast aura on select" or "Cast seal on select"
+            local detail = kind == "aura" and "Cast the aura when you choose it in the Auras flyout."
+                or "Cast the seal when you choose it in the Seals flyout. The Judgement flyout picks a seal for later."
+            lastFlyoutControl = AddCheck(option, label, detail, lastFlyoutControl, 0, function()
                 if InCombatLockdown() or EditModeActive() then return end
                 for _, buttonState in ipairs(states) do
                     if buttonState.kind == kind then ApplyFlyoutCastOption(buttonState) end
@@ -181,28 +191,19 @@ function addon.BuildSettings(deps)
             end)
         end
     end
-    local flyoutHelp = AddText(
-        "Open a flyout by hovering, using the modifier with the keybind, or holding the gamepad button.\nScroll or point to a spell. Click it, release the modifier, or press the gamepad confirm button to select it.",
-        lastFlyoutControl, -5)
-    local displayHeading = AddHeading("Appearance", flyoutHelp, 0, -16)
-    local grayCheck
+    local displayHeading = AddHeading("Appearance", lastFlyoutControl, 0, -12)
+    local grayAnchor, grayGap = displayHeading, -4
     if isShaman then
-        local stockBarCheck = AddCheck("hideStockBar", "Hide the default Totem Bar",
+        grayAnchor = AddCheck("hideStockBar", "Hide Blizzard Totem Bar",
+            "Hides Blizzard's Totem Bar while Totem Buttons is enabled.",
             displayHeading, -4, ApplyStockBarVisibility)
-        grayCheck = AddCheck("greyInactive", "Gray out inactive totems, imbues, and shields",
-            stockBarCheck, 0, RefreshAppearance)
-    else
-        grayCheck = AddCheck("greyInactive", "Gray out inactive auras, seals, and buffs",
-            displayHeading, -4, RefreshAppearance)
-        grayCheck:SetScript("OnEnter", function(self)
-            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-            GameTooltip:SetText("Gray out inactive auras, seals, and buffs")
-            GameTooltip:AddLine("Also grays out Judgement when you have no active seal.", 1, 1, 1, true)
-            GameTooltip:Show()
-        end)
-        grayCheck:SetScript("OnLeave", function() GameTooltip:Hide() end)
+        grayGap = 0
     end
-    local countdownCheck = AddCheck("showCountdown", "Show countdown numbers", grayCheck, 0, RefreshAppearance)
+    local grayDetail = isShaman and "Grays out inactive totems, imbues, and shields."
+        or "Grays out inactive auras, seals, and buffs, and Judgement when you have no active seal."
+    local grayCheck = AddCheck("greyInactive", "Gray out inactive", grayDetail, grayAnchor, grayGap, RefreshAppearance)
+    local countdownCheck = AddCheck("showCountdown", "Countdown numbers",
+        "Shows numbers for remaining effect durations and cooldowns.", grayCheck, 0, RefreshAppearance)
     local sizeLabel = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
     sizeLabel:SetPoint("TOPLEFT", countdownCheck, "BOTTOMLEFT", 24, -5)
     sizeLabel:SetText("Countdown size")
@@ -212,6 +213,7 @@ function addon.BuildSettings(deps)
     countdownSize:SetMinMaxValues(minCountdownPercent, maxCountdownPercent)
     countdownSize:SetValueStep(1)
     countdownSize:SetObeyStepOnDrag(true)
+    AddTooltip(countdownSize, "Countdown size", "Changes the size of the countdown numbers.")
     countdownSize:SetValue(TotemButtonsDB.countdownPercent)
     local sizeValue = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
     sizeValue:SetPoint("LEFT", countdownSize, "RIGHT", 8, 0)
@@ -228,31 +230,24 @@ function addon.BuildSettings(deps)
     end)
 
     local UpdateRangeOptions
-    local reminderAnchor, reminderIndent = sizeLabel, -24
+    local reminderAnchor = sizeLabel
     if isShaman then
-        local rangeCheck = AddCheck("showRangeTint", "Tint active totems red when you are missing their buff",
+        local rangeCheck = AddCheck("showRangeTint", "Totem range tint",
+            "Tints an active totem red when you're missing its buff.",
             sizeLabel, -8, RefreshAppearance, -24)
         local nonBuffCheck, nonBuffLabel = AddCheck("includeNonBuffTotems",
-            "Include non-buff totems (unavailable in instances)", rangeCheck, 0, RefreshAppearance, 24)
+            "Include non-buff totems", "Also checks distance to totems that don't grant a buff. This check is unavailable in instances.", rangeCheck, 0, RefreshAppearance, 24)
         UpdateRangeOptions = function()
             local enabled = TotemButtonsDB.showRangeTint ~= false
             nonBuffCheck:SetEnabled(enabled)
             nonBuffLabel:SetAlpha(enabled and 1 or 0.5)
         end
         rangeCheck:HookScript("OnClick", UpdateRangeOptions)
-        reminderAnchor = AddCheck("showStormstrikeReset", "Show Stormstrike reset indicator",
-            nonBuffCheck, 0, deps.UpdateStormstrikeAlert, -24)
-        reminderIndent = 0
+        reminderAnchor = nonBuffCheck
     end
-    AddCheck("showGatheringTrackingOnButtons", "Show missing gathering tracking on buttons",
-        reminderAnchor, -4, addon.RefreshGatheringReminder, reminderIndent)
-
-    local function FitContent()
-        local width = panel:GetWidth()
-        if width <= 8 then return end
-        for _, label in ipairs(helpLabels) do label:SetWidth(width - 8) end
-
-    end
+    AddCheck("showGatheringTrackingOnButtons", "Gathering tracking",
+        "Out of combat, shows Find Herbs or Find Minerals on your buttons when neither tracker is active.",
+        reminderAnchor, -4, addon.RefreshGatheringReminder, -24)
 
     local function UpdateCountdownOptions()
         local enabled = TotemButtonsDB.showCountdown ~= false
@@ -263,14 +258,12 @@ function addon.BuildSettings(deps)
     end
 
     countdownCheck:HookScript("OnClick", UpdateCountdownOptions)
-    panel:HookScript("OnSizeChanged", FitContent)
     canvas:SetScript("OnShow", function()
         for key, check in pairs(settingsChecks) do
             check:SetChecked(TotemButtonsDB[key] ~= false)
         end
         UpdateCountdownOptions()
         if UpdateRangeOptions then UpdateRangeOptions() end
-        FitContent()
     end)
     return settingsCategory
 end

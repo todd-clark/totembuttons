@@ -16,6 +16,7 @@ local elements = isShaman and {
     { key = "imbues", label = "Imbues", spells = {8017, 8024, 8033, 8232}, kind = "imbue" },
     { key = "shields", label = "Shields", spells = {324, 408510}, kind = "shield" },
     { key = "nova", label = "Fire Nova", spells = {408341}, kind = "nova" },
+    { key = "stormstrike", label = "Stormstrike", spells = {17364}, kind = "stormstrike" },
 } or isPaladin and {
     { key = "auras", label = "Auras", spells = {465, 7294, 19746, 19876, 19888, 19891, 20218}, kind = "aura" },
     { key = "seals", label = "Seals", spells = paladinSeals, kind = "seal" },
@@ -55,9 +56,11 @@ local function Readable(value)
     return not (issecretvalue and issecretvalue(value))
 end
 
+-- Match Blizzard's action-button low-mana vertex color.
+local lowManaShade = 0.5
 local function PaintAuraManaTint(art, lowMana)
     if art.lowMana == lowMana then return true end
-    local shade = lowMana and 0.5 or 1
+    local shade = lowMana and lowManaShade or 1
     if pcall(art.icon.SetVertexColor, art.icon, shade, shade, 1) then
         art.lowMana = lowMana
         return true
@@ -423,7 +426,7 @@ local function PaintButtonTint(state, effect)
     if color == "range" then
         art.icon:SetVertexColor(1, 0.25, 0.25)
     elseif color == "mana" then
-        art.icon:SetVertexColor(0.5, 0.5, 1)
+        art.icon:SetVertexColor(lowManaShade, lowManaShade, 1)
     else
         art.icon:SetVertexColor(1, 1, 1)
     end
@@ -570,6 +573,8 @@ local function PaintSelection(state)
     if EditModeActive() then return end
     local art = state.crossbarArt or state
     local selected = state.button:GetAttribute("spell1")
+    local showingJudgement = state.kind == "judgement" and selected ~= nil
+        and selected == state.flyout:GetAttribute("judgementSpell")
     local name = selected and C_Spell.GetSpellName(selected)
     local gathering = not art.alternateSpell and GatheringSpell()
     local displaySpell = art.alternateSpell or gathering or selected
@@ -582,9 +587,10 @@ local function PaintSelection(state)
         art.icon:SetDesaturated(TotemButtonsDB.greyInactive ~= false and not PaladinAuraActive(name))
     elseif state.kind == "judgement" then
         local nativeSealDisplay = UpdateTimedAuraArtwork(state)
-        art.icon:SetDesaturated(TotemButtonsDB.greyInactive ~= false
-            and selected ~= nil and selected == state.flyout:GetAttribute("judgementSpell")
+        art.icon:SetDesaturated(TotemButtonsDB.greyInactive ~= false and showingJudgement
             and (nativeSealDisplay or not activeJudgementSeal))
+    elseif state.kind == "stormstrike" then
+        art.icon:SetDesaturated(false)
     elseif state.kind ~= "nova" then
         art.icon:SetDesaturated(not effect and TotemButtonsDB.greyInactive ~= false)
     end
@@ -600,7 +606,7 @@ local function PaintSelection(state)
     if gathering then art.icon:SetDesaturated(false) end
     if selected and state.kind ~= "judgement" then TotemButtonsDB[state.key] = selected end
 
-    PaintGlobalCooldown(art, selected)
+    PaintGlobalCooldown(art, not showingJudgement and selected)
     local cooldown = art.cooldown
     if state.crossbarArt then UpdateCountdownFont(art, art.host:GetSize()) end
     local hideNumbers = TotemButtonsDB.showCountdown == false
@@ -610,7 +616,8 @@ local function PaintSelection(state)
     local start, duration, rate, timer
     if effect and not gathering then
         start, duration, timer = effect.start, effect.duration, effect.timer
-    elseif not gathering and selected and (state.slot or state.kind == "nova" or state.kind == "judgement") then
+    elseif not gathering and selected and (state.slot or state.kind == "nova"
+        or state.kind == "judgement" or state.kind == "stormstrike") then
         start, duration, rate, timer = ReadSpellCooldown(selected, cooldown)
     end
     local showingSpellCooldown = not effect and (start ~= nil or timer ~= nil)
@@ -736,7 +743,6 @@ local function ReadTalentRank(spellID, alternateSpellID)
     return 0
 end
 
-local improvedStormstrikeRank = 0
 local function RefreshTotemTalents()
     earthbindName = C_Spell.GetSpellName(2484)
     local rank = ReadTalentRank(16043, 16130)
@@ -744,7 +750,6 @@ local function RefreshTotemTalents()
         local yards = totemRangeYards[2484] + math.min(rank, 2)
         earthbindRangeSquared = yards * yards
     end
-    improvedStormstrikeRank = ReadTalentRank(1223031) or 0
 end
 
 local function TotemRangeSquared(name)
@@ -1184,7 +1189,7 @@ local function NotePlayerCast(spellID)
     local name = C_Spell.GetSpellName(spellID)
     if not name then return end
     for _, element in ipairs(elements) do
-        if element.kind ~= "nova" then
+        if element.kind ~= "nova" and element.kind ~= "stormstrike" then
             for _, baseID in ipairs(element.spells) do
                 if name == C_Spell.GetSpellName(baseID) then
                     local slot, kind = element.slot, element.kind
@@ -1292,83 +1297,19 @@ local function CreateHighlightTexture(frame, index, layer)
     return texture
 end
 
-local function CreateButtonHighlight(button, lightning, color)
+local function CreateButtonHighlight(button, color)
     local wrapper = CreateFrame("Frame", nil, button)
     wrapper:SetAllPoints(button)
     wrapper:Hide()
 
+    local r, g, b = unpack(color)
     local halo = CreateHighlightTexture(wrapper, 1, 3)
     halo:SetBlendMode("ADD")
-    if lightning then
-        halo:SetVertexColor(0.17, 0.63, 1, 1)
-    else
-        halo:SetVertexColor(color[1], color[2], color[3], 1)
-    end
+    halo:SetVertexColor(r, g, b, 1)
 
     local border = CreateHighlightTexture(wrapper, 2, 6)
-    local r, g, b = unpack(lightning and { 0.53, 0.83, 1 } or color)
     border:SetVertexColor(0.18 + 0.82 * r, 0.18 + 0.82 * g, 0.18 + 0.82 * b)
-
-    if lightning then
-        local cooldown = button.cooldown or button.Cooldown
-        local level = cooldown and cooldown:GetFrameLevel() or button:GetFrameLevel()
-        wrapper:SetFrameLevel(math.max(button:GetFrameLevel(), level) + 8)
-        local arc = {}
-        for index = 1, 4 do
-            local line = wrapper:CreateLine(nil, "OVERLAY", nil, 7)
-            line:SetThickness(4)
-            line:SetColorTexture(0.86, 0.97, 1, 1)
-            arc[index] = line
-        end
-
-        local function EdgePoint(progress, offset, width, height)
-            local edge = progress % 4
-            if edge < 1 then return edge * width, height + offset end
-            if edge < 2 then return width + offset, (2 - edge) * height end
-            if edge < 3 then return (3 - edge) * width, -offset end
-            return -offset, (edge - 3) * height
-        end
-
-        local elapsed = 0
-        local function Animate(self, delta)
-            elapsed = elapsed + delta
-            local width, height = self:GetSize()
-            local progress = elapsed / 0.65 * 4
-            local x, y = EdgePoint(progress, -5.25, width, height)
-            for index, line in ipairs(arc) do
-                local nextX, nextY = EdgePoint(progress + index * 0.20,
-                    index % 2 == 1 and 3.75 or -5.25, width, height)
-                line:SetStartPoint("BOTTOMLEFT", self, x, y)
-                line:SetEndPoint("BOTTOMLEFT", self, nextX, nextY)
-                x, y = nextX, nextY
-            end
-            self:SetAlpha(1 - math.min(elapsed / 0.65, 1) * 0.45)
-        end
-        wrapper:SetScript("OnShow", function(self)
-            elapsed = 0
-            Animate(self, 0)
-            border:Show()
-            for _, line in ipairs(arc) do line:Show() end
-            self:SetScript("OnUpdate", Animate)
-        end)
-        wrapper:SetScript("OnHide", function(self) self:SetScript("OnUpdate", nil) end)
-    end
-
     return wrapper
-end
-
--- A visual-only alert on the actual Stormstrike action slot. Keep a
--- separate glow so hiding this alert does not cancel another addon's proc art.
-local TestStormstrikeGlow, UpdateStormstrikeAlert, RefreshStormstrikeGlow
-if isShaman then
-    TestStormstrikeGlow, UpdateStormstrikeAlert, RefreshStormstrikeGlow = addon.CreateStormstrikeAlert({
-        barPrefixes = barPrefixes,
-        stockBars = stockBars,
-        HostAction = HostAction,
-        Readable = Readable,
-        CreateButtonHighlight = CreateButtonHighlight,
-        GetTalentRank = function() return improvedStormstrikeRank end,
-    })
 end
 
 local function HostKeys(host)
@@ -1400,7 +1341,7 @@ local function SyncSlotKeys(state, force)
     local clicks = {}
     local baseCount = #keys
     for index = 1, baseCount do clicks[index] = "LeftButton" end
-    if state.kind ~= "nova" or state.magmaKeyAvailable then
+    if state.kind ~= "stormstrike" and (state.kind ~= "nova" or state.magmaKeyAvailable) then
         local modifier = KeyboardFlyoutModifier()
         local click = state.kind == "nova" and "RightButton" or "Flyout"
         for index = 1, baseCount do
@@ -2170,7 +2111,7 @@ local function RefreshChoices(state, known, knownIDs)
             if selected == spell or selectedName == name then retained = spell end
             if not choice.selectionGlow then
                 local element = state.slot or spellHighlightSlots[baseID]
-                choice.selectionGlow = CreateButtonHighlight(choice, false, flyoutColors[element] or holyHighlight)
+                choice.selectionGlow = CreateButtonHighlight(choice, flyoutColors[element] or holyHighlight)
             end
             choice.spellID = spell
             choice:SetAttribute("totemSpell", spell)
@@ -2187,9 +2128,18 @@ local function RefreshChoices(state, known, knownIDs)
     end
     ApplyFlyoutCastOption(state)
     state.flyout:SetSize(size, math.max(1, count) * size)
-    state.flyout:SetAttribute("hasChoices", count > 0 and state.kind ~= "nova")
-    if state.kind ~= "nova" then ApplyFlyoutModifier(state) end
+    state.flyout:SetAttribute("hasChoices", count > 0 and state.kind ~= "nova" and state.kind ~= "stormstrike")
+    if state.kind ~= "nova" and state.kind ~= "stormstrike" then ApplyFlyoutModifier(state) end
     local spell = retained or first
+    if state.kind == "stormstrike" then
+        local name = spell and C_Spell.GetSpellName(spell)
+        local macro = name and ("/startattack [harm,nodead]\n/cast " .. name)
+        state.keyButton:SetAttribute("stormstrikeMacro", macro)
+        for _, button in ipairs({ state.button, state.keyButton }) do
+            button:SetAttribute("type1", macro and "macro" or "spell")
+            button:SetAttribute("macrotext1", macro)
+        end
+    end
     if state.kind == "judgement" then
         local name = C_Spell.GetSpellName(judgementSpell)
         local judgement = knownIDs[judgementSpell] and judgementSpell or (name and known[name])
@@ -2482,7 +2432,6 @@ RefreshCrossbarSlots = addon.CreateCrossbar({
     UpdateTimedAuraArtwork = UpdateTimedAuraArtwork,
     RaiseAuraLayerCooldown = RaiseAuraLayerCooldown,
     CreateGlobalCooldown = CreateGlobalCooldown,
-    RefreshStormstrikeGlow = RefreshStormstrikeGlow,
     HideMacroLabel = HideMacroLabel,
     RestoreMacroLabel = RestoreMacroLabel,
 })
@@ -2679,7 +2628,6 @@ local function BuildSettings()
         SyncSlotKeys = SyncSlotKeys,
         ApplyFlyoutModifier = ApplyFlyoutModifier,
         ApplyStockBarVisibility = ApplyStockBarVisibility,
-        UpdateStormstrikeAlert = UpdateStormstrikeAlert,
         minCountdownPercent = minCountdownPercent,
         maxCountdownPercent = maxCountdownPercent,
         UpdateCountdownFont = UpdateCountdownFont,
@@ -2898,7 +2846,7 @@ events:SetScript("OnEvent", function(_, event, slot, action, spellID)
         gcdDirty = true
         for _, state in ipairs(states) do
             if state.host or state.crossbarArt then
-                if state.slot or state.kind == "nova" or state.kind == "judgement" then
+                if state.slot or state.kind == "nova" or state.kind == "judgement" or state.kind == "stormstrike" then
                     PaintSelection(state)
                 else
                     PaintGlobalCooldown(state.crossbarArt or state, state.button:GetAttribute("spell1"))
@@ -2968,10 +2916,6 @@ SlashCmdList.TOTEMBUTTONS = function(message)
                 end
             end
         end
-        return
-    end
-    if key == "stormstrike" and TestStormstrikeGlow then
-        TestStormstrikeGlow()
         return
     end
     if key == "novastatus" and isShaman then

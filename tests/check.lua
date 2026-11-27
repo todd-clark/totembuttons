@@ -25,11 +25,11 @@ for filename in toc:gmatch("[^\r\n]+") do
         if filename == "TotemButtons.lua" then main = source end
     end
 end
-assert(main and #sources == 6, "Incomplete addon load list")
+assert(main and #sources == 5, "Incomplete addon load list")
 
 local addon = {}
 for index = 1, #sources - 1 do sources[index].chunk("TotemButtons", addon) end
-assert(addon.BuildSettings and addon.CreateCrossbar and addon.CreateStormstrikeAlert)
+assert(addon.BuildSettings and addon.CreateCrossbar)
 assert(addon.StartGatheringReminder)
 assert(addon.WithFlyoutModifier("ALT-1", "CTRL") == "ALT-CTRL-1")
 assert(addon.WithFlyoutModifier("CTRL-1", "CTRL") == nil)
@@ -131,6 +131,15 @@ flyout.keyButton.spell2 = 8190
 flyout.CallMethod = function() end
 release(1535, "alternate", "TotemButtonsRelease", 8190)
 owner.gatheringSpell = nil
+local stormstrikeMacro = "/startattack [harm,nodead]\n/cast Stormstrike"
+flyout.keyButton.spell, flyout.keyButton.stormstrikeMacro = 17364, stormstrikeMacro
+env.pending[1], env.pressed[1], env.ticks[1] = flyout, slot, 0
+local action, cleanup = beforeClick()
+assert(action == "TotemButtonsStormstrike" and cleanup == true)
+assert(slot["*macrotext-TotemButtonsStormstrike"] == stormstrikeMacro)
+afterClick()
+assert(slot["*macrotext-TotemButtonsStormstrike"] == nil and slot.useOnKeyDown == true)
+flyout.keyButton.stormstrikeMacro = nil
 owner.GetFrameRef = function() return sentry end
 sentry["state-sentrycombat"], sentry.sentryActive = "peace", true
 release(6495, 0, "TotemButtonsSentryView", "Sentry Totem")
@@ -138,4 +147,5 @@ sentry["state-sentrycombat"] = "combat"
 release(6495, 0, "TotemButtonsRelease", 6495)
 sentry["state-sentrycombat"], sentry.sentryActive = "peace", false
 release(6495, 0, "TotemButtonsRelease", 6495)
+
 print("Totem Buttons checks passed")

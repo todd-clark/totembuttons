@@ -19,7 +19,7 @@ Extract the release ZIP and copy its `TotemButtons` folder into your WoW Forever
 - **Controller** — On a native Forever crossbar slot, tap and release to cast or hold to open the flyout. Use D-pad Up/Down to browse, A to select, and B to close it.
 - **Judgement** — Pick a seal from its flyout. The slot offers that seal out of combat when no seal is active, and uses Judgement in combat or when a seal is active.
 - **Mouseover cast** — Eligible spells follow WoW’s Mouseover Cast setting and modifier.
-- **Stormstrike** — The action slot can flash blue-white when the addon detects an early reset. Type `/totembuttons stormstrike` to test the glow and see the available reset signals.
+- **Stormstrike** — A dedicated button that starts autoattack against your hostile target and casts Stormstrike.
 
 ## Verification
 
@@ -30,12 +30,12 @@ In WoW Forever, check the following after changing secure input or aura handling
 - Open a keyboard flyout with the cursor locked, scroll, and release the modifier. Confirm that the next press casts the selected spell and that opening without scrolling preserves the selection.
 - From a held controller layer, tap to cast and long-press to open the flyout. Release the layer button before and after the slot button in separate attempts. Confirm D-pad navigation, A selection, and B cancellation while in combat.
 - Check a native aura overlay while fading its host bar, then hide and reveal the bar with a live aura.
-- Pick a different totem in combat, check the selected modifier plus Fire Nova and a controller hold both cast Magma Totem, and trigger an early Stormstrike reset at 2/2 Improved Stormstrike.
+- Pick a different totem in combat, check the selected modifier plus Fire Nova and a controller hold both cast Magma Totem, and check that the dedicated Stormstrike button starts autoattack.
 - Check Judgement before and after sealing, during combat, and between dungeon pulls.
 
 ## Highlight texture
 
-The flyout and Stormstrike share `HighlightBorder.tga`. It contains a rounded stroke and a glow that fades inward and outward.
+The flyout highlight uses `HighlightBorder.tga`. It contains a rounded stroke and a glow that fades inward and outward.
 The addon tints both masks per spell or effect.
 Reuse the same texture for additional classes and supply the color in Lua.
 Run `python3 scripts/generate_highlight_border.py` to regenerate it after
