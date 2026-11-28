@@ -5,15 +5,17 @@ Totem Buttons adds class-specific buttons to your existing action bars in World 
 - **Shaman:** Add buttons for fire, earth, water, and air totems, weapon imbues, shields, or Fire Nova. See totem timers and range indicators where available. Right-click a totem button to dismiss its active totem. Out of combat, left-click, use the slot keybind, or tap the crossbar slot to switch views when Sentry Totem is active. Fire Nova grays out when the addon can't confirm an active fire totem. Hold the selected keyboard flyout modifier while clicking Fire Nova or pressing its keybind to drop Magma Totem. On the native crossbar, hold the Fire Nova slot button and release to drop Magma Totem.
 - **Paladin:** Add separate aura, seal, and buff buttons. Auras and seals can cast on selection or save the choice for the slot's usual keybind. The buttons show whether the selected effect is active on you, with countdowns for timed seals and buffs.
 
+- **Warrior:** Add Battle Shout to your action bar or native crossbar. The button shows the active buff countdown and uses the standard blue tint when you are short on Rage.
+
 ## Installation
 
 Extract the release ZIP and copy its `TotemButtons` folder into your WoW Forever client's `_forever_/Interface/AddOns/` directory. Launch or restart the game and enable **Totem Buttons** in the AddOns list. EllesmereUI action bars and Bartender4 are optional.
 
 ## Setup
 
-1. Log in on a Shaman or Paladin and type `/totembuttons` outside combat.
+1. Log in on a Shaman, Paladin, or Warrior and type `/totembuttons` outside combat.
 2. Drag an icon from the settings panel onto an action-bar slot.
-3. Hover over the slot to select a spell. Click the button or press the slot's keybind to cast.
+3. For buttons with a flyout, hover over the slot to select a spell. Click the button or press the slot's keybind to cast.
 
 - **Keyboard** — Hold the configured flyout modifier (Shift by default), press the slot bind, and scroll to highlight a spell. Release the modifier to select it. The next normal keypress casts it. Existing keybinds keep priority. **Require selected modifier for hover flyouts** uses that same modifier.
 - **Controller** — On a native Forever crossbar slot, tap and release to cast or hold to open the flyout. Use D-pad Up/Down to browse, A to select, and B to close it.

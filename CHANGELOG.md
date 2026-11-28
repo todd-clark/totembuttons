@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.2.38
+
+- Keep the active Battle Shout aura artwork in full color in combat, including on copied buttons.
+
+## 0.2.37
+
+- Suppress the low-Rage tint on Battle Shout while its buff is active.
+
+## 0.2.36
+
+- Give the standard blue resource tint priority over inactive gray on Battle Shout and other tracked effect buttons.
+
+## 0.2.35
+
+- Add a Warrior Battle Shout button with rank selection, buff tracking, global cooldown, and low-rage tint.
+
 ## 0.2.34
 
 - Use Blizzard's standard low-mana tint on all buttons, including seals shown by Judgement.

@@ -23,6 +23,8 @@ local elements = isShaman and {
     { key = "judgement", label = "Judgement", spells = paladinSeals, kind = "judgement" },
     { key = "buffs", label = "Buffs", kind = "buff",
         spells = {19740, 19742, 20217, 19977, 1038, 25780, 1044, 1022, 25782, 25894, 25898, 25890, 25895} },
+} or class == "WARRIOR" and {
+    { key = "battleshout", label = "Battle Shout", spells = {6673}, kind = "buff" },
 } or {}
 
 local function UsesTimedAura(state)
@@ -93,6 +95,7 @@ end
 local shieldAuraSize = 32
 local timedAuraRanks = {
     [324] = { 324, 325, 905, 945, 8134, 10431, 10432 },
+    [6673] = { 6673, 5242, 6192, 11549, 11550, 11551, 25289 },
     [408510] = { 408510 },
     [20154] = { 20154, 20287, 20288, 20289, 20290, 20291, 20292, 20293 },
     [21082] = { 21082, 20162, 20305, 20306, 20307, 20308 },
@@ -143,7 +146,8 @@ local function AuraLayerOpacity(state, parentAlpha)
 end
 
 local function UpdateAuraManaTint(layer, state)
-    local lowMana = state.lowMana == true
+    -- Native Battle Shout artwork is only visible while its aura is active.
+    local lowMana = state.lowMana == true and state.spells[1] ~= 6673
     local painted = false
     for _, art in ipairs(layer.buttons) do
         if PaintAuraManaTint(art, lowMana) then painted = true end
@@ -421,7 +425,12 @@ local function PaintButtonTint(state, effect)
         tint = TotemButtonsDB.includeNonBuffTotems == true and effect.rangeKnown and effect.outOfRange
     end
     local art = state.crossbarArt or state
-    local color = not GatheringSpell() and (tint and "range" or (state.lowMana and "mana" or "normal")) or "normal"
+    local lowPower = state.lowMana and not (state.spells[1] == 6673 and effect)
+    local color = not GatheringSpell() and (tint and "range" or (lowPower and "mana" or "normal")) or "normal"
+    if state.kind ~= "aura" and state.kind ~= "judgement" and state.kind ~= "stormstrike" and state.kind ~= "nova" then
+        art.icon:SetDesaturated(color == "normal" and not effect and not GatheringSpell()
+            and TotemButtonsDB.greyInactive ~= false)
+    end
     if art.buttonTint == color then return end
     if color == "range" then
         art.icon:SetVertexColor(1, 0.25, 0.25)
@@ -591,8 +600,6 @@ local function PaintSelection(state)
             and (nativeSealDisplay or not activeJudgementSeal))
     elseif state.kind == "stormstrike" then
         art.icon:SetDesaturated(false)
-    elseif state.kind ~= "nova" then
-        art.icon:SetDesaturated(not effect and TotemButtonsDB.greyInactive ~= false)
     end
     if state.slot and art.host then UpdateTimedAuraArtwork(state) end
     PaintButtonTint(state, effect)
@@ -1341,7 +1348,7 @@ local function SyncSlotKeys(state, force)
     local clicks = {}
     local baseCount = #keys
     for index = 1, baseCount do clicks[index] = "LeftButton" end
-    if state.kind ~= "stormstrike" and (state.kind ~= "nova" or state.magmaKeyAvailable) then
+    if #state.spells > 1 or state.magmaKeyAvailable then
         local modifier = KeyboardFlyoutModifier()
         local click = state.kind == "nova" and "RightButton" or "Flyout"
         for index = 1, baseCount do
@@ -2128,8 +2135,8 @@ local function RefreshChoices(state, known, knownIDs)
     end
     ApplyFlyoutCastOption(state)
     state.flyout:SetSize(size, math.max(1, count) * size)
-    state.flyout:SetAttribute("hasChoices", count > 0 and state.kind ~= "nova" and state.kind ~= "stormstrike")
-    if state.kind ~= "nova" and state.kind ~= "stormstrike" then ApplyFlyoutModifier(state) end
+    state.flyout:SetAttribute("hasChoices", count > 0 and #state.spells > 1)
+    if #state.spells > 1 then ApplyFlyoutModifier(state) end
     local spell = retained or first
     if state.kind == "stormstrike" then
         local name = spell and C_Spell.GetSpellName(spell)
@@ -2832,7 +2839,8 @@ events:SetScript("OnEvent", function(_, event, slot, action, spellID)
             if state.host or state.crossbarArt then UpdateTimer(state) end
         end
     elseif event == "UNIT_POWER_UPDATE" then
-        if not Readable(action) or action ~= "MANA" or EditModeActive() then return end
+        local powerType = class == "WARRIOR" and "RAGE" or "MANA"
+        if not Readable(action) or action ~= powerType or EditModeActive() then return end
         for _, state in ipairs(states) do
             if state.host or state.crossbarArt then
                 local spell = state.button:GetAttribute("spell1")

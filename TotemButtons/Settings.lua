@@ -111,6 +111,7 @@ function addon.BuildSettings(deps)
         air = "Right-click to dismiss a totem. While Sentry Totem is active, use the button out of combat to switch views.",
         nova = "Use the modifier and click or press the keybind to drop Magma Totem. On gamepad, hold the button until its icon changes, then release.",
         stormstrike = "Starts autoattack against your target and casts Stormstrike.",
+        battleshout = "Casts your highest known rank and shows the remaining duration of Battle Shout.",
         judgement = "Choose a seal in the flyout. Out of combat, the button applies that seal if needed. With the chosen seal active or in combat, it casts Judgement.",
     }
     buttonRow:SetSize(1, 55)
@@ -147,51 +148,54 @@ function addon.BuildSettings(deps)
         AddButton(state, lastButtonRow, (index - 1) % 4 + 1)
     end
 
-    local modifierDropdown = CreateFrame("DropdownButton", nil, panel, "WowStyle1DropdownTemplate")
-    modifierDropdown:SetPoint("TOPLEFT", lastButtonRow, "BOTTOMLEFT", 0, -8)
-    modifierDropdown:SetWidth(110)
-    local modifierLabel = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
-    modifierLabel:SetPoint("LEFT", modifierDropdown, "RIGHT", 8, 0)
-    modifierLabel:SetText("Modifier key")
-    AddTooltip(modifierDropdown, "Modifier key",
-        "Hold this key with a button's keybind to open its flyout. Scroll to a choice and release the modifier to select it. On gamepad, hold the button to open the flyout.")
-    modifierDropdown:SetupMenu(function(_, root)
-        for _, modifier in ipairs(flyoutModifiers) do
-            local label = modifier:sub(1, 1) .. modifier:sub(2):lower()
-            root:CreateRadio(label, function(value) return KeyboardFlyoutModifier() == value end,
-                function(value)
-                    TotemButtonsDB.keyboardFlyoutModifier = value
-                    if InCombatLockdown() or EditModeActive() then return end
-                    for _, state in ipairs(states) do
-                        if state.host then SyncSlotKeys(state, true) end
-                        ApplyFlyoutModifier(state)
-                    end
-                end, modifier)
-        end
-    end)
-    local hoverModifierCheck = AddCheck("requireHoverModifier", "Modifier for hover",
-        "Hold the selected modifier while pointing at a button to open its flyout.",
-        modifierDropdown, -4, function()
-            if InCombatLockdown() or EditModeActive() then return end
-            for _, state in ipairs(states) do ApplyFlyoutModifier(state) end
+    local appearanceAnchor = lastButtonRow
+    if #elements > 1 or #elements[1].spells > 1 then
+        local modifierDropdown = CreateFrame("DropdownButton", nil, panel, "WowStyle1DropdownTemplate")
+        modifierDropdown:SetPoint("TOPLEFT", lastButtonRow, "BOTTOMLEFT", 0, -8)
+        modifierDropdown:SetWidth(110)
+        local modifierLabel = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+        modifierLabel:SetPoint("LEFT", modifierDropdown, "RIGHT", 8, 0)
+        modifierLabel:SetText("Modifier key")
+        AddTooltip(modifierDropdown, "Modifier key",
+            "Hold this key with a button's keybind to open its flyout. Scroll to a choice and release the modifier to select it. On gamepad, hold the button to open the flyout.")
+        modifierDropdown:SetupMenu(function(_, root)
+            for _, modifier in ipairs(flyoutModifiers) do
+                local label = modifier:sub(1, 1) .. modifier:sub(2):lower()
+                root:CreateRadio(label, function(value) return KeyboardFlyoutModifier() == value end,
+                    function(value)
+                        TotemButtonsDB.keyboardFlyoutModifier = value
+                        if InCombatLockdown() or EditModeActive() then return end
+                        for _, state in ipairs(states) do
+                            if state.host then SyncSlotKeys(state, true) end
+                            ApplyFlyoutModifier(state)
+                        end
+                    end, modifier)
+            end
         end)
-    local lastFlyoutControl = hoverModifierCheck
-    for _, state in ipairs(elements) do
-        local kind = state.kind
-        local option = flyoutCastOptions[kind]
-        if option then
-            local label = kind == "aura" and "Cast aura on select" or "Cast seal on select"
-            local detail = kind == "aura" and "Cast the aura when you choose it in the Auras flyout."
-                or "Cast the seal when you choose it in the Seals flyout. The Judgement flyout picks a seal for later."
-            lastFlyoutControl = AddCheck(option, label, detail, lastFlyoutControl, 0, function()
+        local hoverModifierCheck = AddCheck("requireHoverModifier", "Modifier for hover",
+            "Hold the selected modifier while pointing at a button to open its flyout.",
+            modifierDropdown, -4, function()
                 if InCombatLockdown() or EditModeActive() then return end
-                for _, buttonState in ipairs(states) do
-                    if buttonState.kind == kind then ApplyFlyoutCastOption(buttonState) end
-                end
+                for _, state in ipairs(states) do ApplyFlyoutModifier(state) end
             end)
+        appearanceAnchor = hoverModifierCheck
+        for _, state in ipairs(elements) do
+            local kind = state.kind
+            local option = flyoutCastOptions[kind]
+            if option then
+                local label = kind == "aura" and "Cast aura on select" or "Cast seal on select"
+                local detail = kind == "aura" and "Cast the aura when you choose it in the Auras flyout."
+                    or "Cast the seal when you choose it in the Seals flyout. The Judgement flyout picks a seal for later."
+                appearanceAnchor = AddCheck(option, label, detail, appearanceAnchor, 0, function()
+                    if InCombatLockdown() or EditModeActive() then return end
+                    for _, buttonState in ipairs(states) do
+                        if buttonState.kind == kind then ApplyFlyoutCastOption(buttonState) end
+                    end
+                end)
+            end
         end
     end
-    local displayHeading = AddHeading("Appearance", lastFlyoutControl, 0, -12)
+    local displayHeading = AddHeading("Appearance", appearanceAnchor, 0, -12)
     local grayAnchor, grayGap = displayHeading, -4
     if isShaman then
         grayAnchor = AddCheck("hideStockBar", "Hide Blizzard Totem Bar",
@@ -199,8 +203,12 @@ function addon.BuildSettings(deps)
             displayHeading, -4, ApplyStockBarVisibility)
         grayGap = 0
     end
-    local grayDetail = isShaman and "Grays out inactive totems, imbues, and shields."
-        or "Grays out inactive auras, seals, and buffs, and Judgement when you have no active seal."
+    local grayDetail = "Grays out inactive buffs."
+    if isShaman then
+        grayDetail = "Grays out inactive totems, imbues, and shields."
+    elseif deps.class == "PALADIN" then
+        grayDetail = "Grays out inactive auras, seals, and buffs, and Judgement when you have no active seal."
+    end
     local grayCheck = AddCheck("greyInactive", "Gray out inactive", grayDetail, grayAnchor, grayGap, RefreshAppearance)
     local countdownCheck = AddCheck("showCountdown", "Countdown numbers",
         "Shows numbers for remaining effect durations and cooldowns.", grayCheck, 0, RefreshAppearance)
